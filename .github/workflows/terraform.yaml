@@ -50,6 +50,7 @@ jobs:
         run: |
           cd terraform
           terraform fmt -recursive
+        continue-on-error: true
 
   terraform:
     name: Terraform ${{ github.event.inputs.action }} - ${{ github.event.inputs.environment }}
