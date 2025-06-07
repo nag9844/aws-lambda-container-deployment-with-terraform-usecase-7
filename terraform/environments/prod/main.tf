@@ -10,7 +10,10 @@ terraform {
   }
 
   backend "s3" {
-    # Backend configuration is provided via CLI or backend config file
+    bucket       = "usecases-terraform-state-bucket"
+    key          = "usecase7/prod/statefile.tfstate"
+    region       = "ap-south-1"
+    encrypt      = true
     use_lockfile = true
   }
 }

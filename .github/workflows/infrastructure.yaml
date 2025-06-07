@@ -99,8 +99,7 @@ jobs:
             -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
             -backend-config="key=${{ github.event.inputs.environment || 'dev' }}/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}" \
-            -backend-config="encrypt=true" \
-            -backend-config="dynamodb_table=${{ vars.TERRAFORM_LOCK_TABLE }}"
+            -backend-config="encrypt=true" 
 
       - name: Terraform Plan
         id: plan
@@ -176,8 +175,7 @@ jobs:
             -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
             -backend-config="key=${{ github.event.inputs.environment || 'dev' }}/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}" \
-            -backend-config="encrypt=true" \
-            -backend-config="dynamodb_table=${{ vars.TERRAFORM_LOCK_TABLE }}"
+            -backend-config="encrypt=true" 
 
       - name: Terraform Apply
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
@@ -231,8 +229,7 @@ jobs:
             -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
             -backend-config="key=${{ github.event.inputs.environment || 'dev' }}/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}" \
-            -backend-config="encrypt=true" \
-            -backend-config="dynamodb_table=${{ vars.TERRAFORM_LOCK_TABLE }}"
+            -backend-config="encrypt=true" 
 
       - name: Terraform Destroy
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
