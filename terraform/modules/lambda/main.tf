@@ -1,112 +1,41 @@
-# IAM Role for Lambda
-resource "aws_iam_role" "lambda_role" {
-  name = "${var.project_name}-${var.environment}-lambda-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        }
-      }
-    ]
-  })
-}
-
-# IAM Policy for Lambda
-resource "aws_iam_policy" "lambda_policy" {
-  name        = "${var.project_name}-${var.environment}-lambda-policy"
-  description = "IAM policy for Lambda function"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:aws:logs:*:*:*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ec2:CreateNetworkInterface",
-          "ec2:DescribeNetworkInterfaces",
-          "ec2:DeleteNetworkInterface",
-          "ec2:AttachNetworkInterface",
-          "ec2:DetachNetworkInterface"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "xray:PutTraceSegments",
-          "xray:PutTelemetryRecords"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_policy" {
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = aws_iam_policy.lambda_policy.arn
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_vpc_execution" {
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-# Lambda Function - Create with Image package type from the start
 resource "aws_lambda_function" "main" {
-  function_name = "${var.project_name}-${var.environment}-hello-world"
-  role          = aws_iam_role.lambda_role.arn
+  function_name = "${var.name_prefix}-app"
+  role         = var.execution_role
   
-  # Use Image package type from the beginning
   package_type = "Image"
-  image_uri    = "${var.ecr_repository_uri}:latest"
+  image_uri    = "${var.ecr_repository}:latest"
   
-  timeout     = 30
-  memory_size = 256
-
+  memory_size = var.memory_size
+  timeout     = var.timeout
+  
   vpc_config {
-    subnet_ids         = var.private_subnet_ids
-    security_group_ids = [var.lambda_security_group_id]
+    subnet_ids         = var.vpc_config.subnet_ids
+    security_group_ids = var.vpc_config.security_group_ids
   }
-
+  
+  environment {
+    variables = var.environment_variables
+  }
+  
   tracing_config {
     mode = "Active"
   }
-
-  environment {
-    variables = {
-      ENVIRONMENT = var.environment
-      PROJECT_NAME = var.project_name
-    }
-  }
-
+  
+  tags = var.tags
+  
   depends_on = [
-    aws_iam_role_policy_attachment.lambda_policy,
-    aws_iam_role_policy_attachment.lambda_vpc_execution,
+    aws_cloudwatch_log_group.lambda_logs
   ]
-
-  tags = {
-    Name = "${var.project_name}-${var.environment}-lambda"
-  }
-
-  # Ignore changes to image_uri as it will be updated by CI/CD
+  
+  # Ignore changes to image_uri to prevent unnecessary updates
   lifecycle {
-    ignore_changes = [
-      image_uri
-    ]
+    ignore_changes = [image_uri]
   }
+}
+
+resource "aws_cloudwatch_log_group" "lambda_logs" {
+  name              = "/aws/lambda/${var.name_prefix}-app"
+  retention_in_days = 14
+  
+  tags = var.tags
 }

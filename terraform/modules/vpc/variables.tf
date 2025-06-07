@@ -1,3 +1,8 @@
+variable "name_prefix" {
+  description = "Name prefix for resources"
+  type        = string
+}
+
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -8,22 +13,22 @@ variable "project_name" {
   type        = string
 }
 
-variable "vpc_cidr" {
+variable "cidr_block" {
   description = "CIDR block for VPC"
   type        = string
 }
 
 variable "availability_zones" {
-  description = "List of availability zones"
+  description = "Availability zones"
   type        = list(string)
 }
 
-variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets"
-  type        = list(string)
+variable "tags" {
+  description = "Tags to apply to resources"
+  type        = map(string)
+  default     = {}
 }
 
-variable "private_subnet_cidrs" {
-  description = "CIDR blocks for private subnets"
-  type        = list(string)
+variable "cidr_block" {
+  
 }

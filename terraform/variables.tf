@@ -1,22 +1,23 @@
 variable "aws_region" {
-  description = "AWS region"
+  description = "AWS region for resources"
   type        = string
   default     = "ap-south-1"
 }
 
-variable "environment" {
-  description = "Environment name"
-  type        = string
-  validation {
-    condition     = contains(["dev", "staging", "prod"], var.environment)
-    error_message = "Environment must be one of: dev, staging, prod."
-  }
-}
-
 variable "project_name" {
-  description = "Project name"
+  description = "Name of the project"
   type        = string
   default     = "hello-world-lambda"
+}
+
+variable "environment" {
+  description = "Environment name (dev, staging, prod)"
+  type        = string
+  
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "Environment must be dev, staging, or prod."
+  }
 }
 
 variable "vpc_cidr" {
@@ -26,19 +27,20 @@ variable "vpc_cidr" {
 }
 
 variable "availability_zones" {
-  description = "List of availability zones"
+  description = "Availability zones"
   type        = list(string)
   default     = ["ap-south-1a", "ap-south-1b"]
 }
 
-variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets"
-  type        = list(string)
-  default     = ["10.0.1.0/24", "10.0.2.0/24"]
+# Environment-specific variables
+variable "lambda_memory_size" {
+  description = "Memory size for Lambda function"
+  type        = number
+  default     = 512
 }
 
-variable "private_subnet_cidrs" {
-  description = "CIDR blocks for private subnets"
-  type        = list(string)
-  default     = ["10.0.3.0/24", "10.0.4.0/24"]
+variable "lambda_timeout" {
+  description = "Timeout for Lambda function"
+  type        = number
+  default     = 30
 }

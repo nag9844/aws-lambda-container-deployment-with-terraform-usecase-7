@@ -1,19 +1,14 @@
-output "api_id" {
-  description = "ID of the API Gateway"
-  value       = aws_api_gateway_rest_api.main.id
+output "api_url" {
+  description = "API Gateway URL"
+  value       = aws_apigatewayv2_api.main.api_endpoint
 }
 
-output "api_url" {
-  description = "URL of the API Gateway"
-  value       = aws_api_gateway_stage.main.invoke_url
+output "api_name" {
+  description = "API Gateway name"
+  value       = aws_apigatewayv2_api.main.name
 }
 
 output "execution_arn" {
-  description = "Execution ARN of the API Gateway"
-  value       = aws_api_gateway_rest_api.main.execution_arn
-}
-
-output "stage_name" {
-  description = "Stage name of the API Gateway"
-  value       = aws_api_gateway_stage.main.stage_name
+  description = "API Gateway execution ARN"
+  value       = aws_apigatewayv2_api.main.execution_arn
 }

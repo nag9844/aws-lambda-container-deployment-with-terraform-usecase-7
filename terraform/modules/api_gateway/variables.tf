@@ -1,3 +1,8 @@
+variable "name_prefix" {
+  description = "Name prefix for resources"
+  type        = string
+}
+
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -9,17 +14,17 @@ variable "project_name" {
 }
 
 variable "lambda_function_arn" {
-  description = "ARN of the Lambda function"
+  description = "Lambda function ARN"
   type        = string
 }
 
 variable "lambda_function_name" {
-  description = "Name of the Lambda function"
+  description = "Lambda function name"
   type        = string
 }
 
-variable "lambda_invoke_arn" {
-  description = "Invoke ARN of the Lambda function"
-  type        = string
-  default     = ""
+variable "tags" {
+  description = "Tags to apply to resources"
+  type        = map(string)
+  default     = {}
 }

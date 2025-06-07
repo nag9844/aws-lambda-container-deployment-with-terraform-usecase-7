@@ -1,23 +1,22 @@
 resource "aws_ecr_repository" "main" {
   name                 = var.repository_name
   image_tag_mutability = "MUTABLE"
-
+  
   image_scanning_configuration {
     scan_on_push = true
   }
-
-  encryption_configuration {
-    encryption_type = "AES256"
-  }
-
-  tags = {
-    Name = "${var.project_name}-${var.environment}-ecr"
+  
+  tags = var.tags
+  
+  # Prevent accidental deletion of repository with images
+  lifecycle {
+    prevent_destroy = false
   }
 }
 
 resource "aws_ecr_lifecycle_policy" "main" {
   repository = aws_ecr_repository.main.name
-
+  
   policy = jsonencode({
     rules = [
       {
@@ -50,24 +49,25 @@ resource "aws_ecr_lifecycle_policy" "main" {
   })
 }
 
-# IAM policy for ECR access
-resource "aws_iam_policy" "ecr_access" {
-  name        = "${var.project_name}-${var.environment}-ecr-access"
-  description = "IAM policy for ECR access"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:GetAuthorizationToken",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
+# Force delete ECR repository on destroy (for testing environments)
+resource "null_resource" "ecr_cleanup" {
+  count = var.environment != "prod" ? 1 : 0
+  
+  triggers = {
+    repository_name = aws_ecr_repository.main.name
+  }
+  
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      aws ecr delete-repository \
+        --repository-name ${self.triggers.repository_name} \
+        --force \
+        --region ${data.aws_region.current.name} || true
+    EOT
+  }
+  
+  depends_on = [aws_ecr_repository.main]
 }
+
+data "aws_region" "current" {}

@@ -1,13 +1,7 @@
-# CloudWatch Log Group for Lambda
-resource "aws_cloudwatch_log_group" "lambda" {
-  name              = "/aws/lambda/${var.lambda_function_name}"
-  retention_in_days = 14
-}
-
 # CloudWatch Dashboard
 resource "aws_cloudwatch_dashboard" "main" {
-  dashboard_name = "${var.project_name}-${var.environment}-dashboard"
-
+  dashboard_name = "${var.name_prefix}-dashboard"
+  
   dashboard_body = jsonencode({
     widgets = [
       {
@@ -16,7 +10,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         y      = 0
         width  = 12
         height = 6
-
+        
         properties = {
           metrics = [
             ["AWS/Lambda", "Duration", "FunctionName", var.lambda_function_name],
@@ -36,13 +30,12 @@ resource "aws_cloudwatch_dashboard" "main" {
         y      = 6
         width  = 12
         height = 6
-
+        
         properties = {
           metrics = [
-            ["AWS/ApiGateway", "Count", "ApiName", "${var.project_name}-${var.environment}-api"],
-            [".", "Latency", ".", "."],
-            [".", "4XXError", ".", "."],
-            [".", "5XXError", ".", "."]
+            ["AWS/ApiGatewayV2", "Count", "ApiName", var.api_gateway_name],
+            [".", "IntegrationLatency", ".", "."],
+            [".", "Latency", ".", "."]
           ]
           view    = "timeSeries"
           stacked = false
@@ -53,11 +46,13 @@ resource "aws_cloudwatch_dashboard" "main" {
       }
     ]
   })
+  
+  # tags = var.tags
 }
 
 # CloudWatch Alarms
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
-  alarm_name          = "${var.project_name}-${var.environment}-lambda-errors"
+  alarm_name          = "${var.name_prefix}-lambda-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = "2"
   metric_name         = "Errors"
@@ -70,12 +65,12 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   dimensions = {
     FunctionName = var.lambda_function_name
   }
-
-  alarm_actions = [aws_sns_topic.alerts.arn]
+  
+  tags = var.tags
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
-  alarm_name          = "${var.project_name}-${var.environment}-lambda-duration"
+  alarm_name          = "${var.name_prefix}-lambda-duration"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = "2"
   metric_name         = "Duration"
@@ -88,32 +83,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
   dimensions = {
     FunctionName = var.lambda_function_name
   }
-
-  alarm_actions = [aws_sns_topic.alerts.arn]
-}
-
-resource "aws_cloudwatch_metric_alarm" "api_gateway_5xx" {
-  alarm_name          = "${var.project_name}-${var.environment}-api-5xx-errors"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "5XXError"
-  namespace           = "AWS/ApiGateway"
-  period              = "300"
-  statistic           = "Sum"
-  threshold           = "5"
-  alarm_description   = "This metric monitors API Gateway 5xx errors"
   
-  dimensions = {
-    ApiName = "${var.project_name}-${var.environment}-api"
-  }
-
-  alarm_actions = [aws_sns_topic.alerts.arn]
+  tags = var.tags
 }
 
-# SNS Topic for alerts
-resource "aws_sns_topic" "alerts" {
-  name = "${var.project_name}-${var.environment}-alerts"
-}
-
-# X-Ray Service Map (automatically created when tracing is enabled)
 data "aws_region" "current" {}

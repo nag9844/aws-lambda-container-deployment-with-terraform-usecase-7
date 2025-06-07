@@ -6,6 +6,14 @@ terraform {
       version = "~> 5.0"
     }
   }
+  
+  backend "s3" {
+    bucket       = "usecases-terraform-state-bucket"
+    key          = "usecase7/statefile.tfstate"
+    region       = "ap-south-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {
@@ -13,69 +21,107 @@ provider "aws" {
   
   default_tags {
     tags = {
-      Environment = var.environment
       Project     = var.project_name
-      ManagedBy   = "Terraform"
+      Environment = var.environment
+      ManagedBy   = "terraform"
     }
   }
 }
 
-# Data sources
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
+# Local values for resource naming
+locals {
+  name_prefix = "${var.project_name}-${var.environment}"
+  
+  common_tags = {
+    Project     = var.project_name
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+}
 
 # VPC Module
 module "vpc" {
   source = "./modules/vpc"
   
-  environment          = var.environment
-  project_name         = var.project_name
-  vpc_cidr            = var.vpc_cidr
-  availability_zones  = var.availability_zones
-  public_subnet_cidrs = var.public_subnet_cidrs
-  private_subnet_cidrs = var.private_subnet_cidrs
+  name_prefix         = local.name_prefix
+  environment         = var.environment
+  project_name        = var.project_name
+  cidr_block         = var.vpc_cidr
+  availability_zones = var.availability_zones
+  
+  tags = local.common_tags
 }
 
 # ECR Module
 module "ecr" {
   source = "./modules/ecr"
   
-  environment  = var.environment
-  project_name = var.project_name
-  repository_name = "${var.project_name}-hello-world"
+  name_prefix      = local.name_prefix
+  repository_name  = "${local.name_prefix}-app"
+  environment      = var.environment
+  project_name     = var.project_name
+  
+  tags = local.common_tags
+}
+
+# IAM Module
+module "iam" {
+  source = "./modules/iam"
+  
+  name_prefix   = local.name_prefix
+  environment   = var.environment
+  project_name  = var.project_name
+  
+  tags = local.common_tags
 }
 
 # Lambda Module
 module "lambda" {
   source = "./modules/lambda"
   
+  name_prefix     = local.name_prefix
   environment     = var.environment
   project_name    = var.project_name
-  ecr_repository_uri = module.ecr.repository_uri
-  vpc_id          = module.vpc.vpc_id
-  private_subnet_ids = module.vpc.private_subnet_ids
-  lambda_security_group_id = module.vpc.lambda_security_group_id
+  ecr_repository  = module.ecr.repository_url
+  execution_role  = module.iam.lambda_execution_role_arn
+  memory_size     = var.lambda_memory_size
+  timeout         = var.lambda_timeout
   
-  depends_on = [module.ecr]
+  vpc_config = {
+    subnet_ids         = module.vpc.private_subnet_ids
+    security_group_ids = [module.vpc.lambda_security_group_id]
+  }
+  
+  environment_variables = {
+    ENVIRONMENT = var.environment
+    NODE_ENV    = "production"
+  }
+  
+  tags = local.common_tags
 }
 
 # API Gateway Module
 module "api_gateway" {
   source = "./modules/api_gateway"
   
-  environment         = var.environment
-  project_name        = var.project_name
-  lambda_function_arn = module.lambda.function_arn
+  name_prefix          = local.name_prefix
+  environment          = var.environment
+  project_name         = var.project_name
+  lambda_function_arn  = module.lambda.function_arn
   lambda_function_name = module.lambda.function_name
-  lambda_invoke_arn   = module.lambda.invoke_arn
+  
+  tags = local.common_tags
 }
 
-# Monitoring Module
-module "monitoring" {
-  source = "./modules/monitoring"
+# CloudWatch Module
+module "cloudwatch" {
+  source = "./modules/cloudwatch"
   
-  environment         = var.environment
-  project_name        = var.project_name
+  name_prefix          = local.name_prefix
+  environment          = var.environment
+  project_name         = var.project_name
   lambda_function_name = module.lambda.function_name
-  api_gateway_id      = module.api_gateway.api_id
+  api_gateway_name     = module.api_gateway.api_name
+  
+  tags = local.common_tags
 }

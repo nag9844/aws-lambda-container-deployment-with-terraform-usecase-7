@@ -1,299 +1,260 @@
-# AWS Lambda Container Deployment with Terraform
+# Hello World Lambda - AWS DevOps Challenge
 
-This project demonstrates a complete DevOps pipeline for deploying a containerized "Hello World" application to AWS Lambda using Infrastructure as Code (Terraform), CI/CD (GitHub Actions), and comprehensive monitoring.
+A comprehensive DevOps implementation showcasing containerized AWS Lambda deployment with Infrastructure as Code, CI/CD pipelines, and monitoring using OIDC authentication.
 
-## Architecture
+## 🏗️ Architecture Overview
 
-```mermaid
-graph TB
-    A[GitHub Repository] --> B[GitHub Actions]
-    B --> C[Docker Build & Push]
-    C --> D[Amazon ECR]
-    B --> E[Terraform Apply]
-    E --> F[AWS Lambda]
-    E --> G[API Gateway]
-    E --> H[VPC & Networking]
-    E --> I[CloudWatch & X-Ray]
-    D --> F
-    G --> F
-    H --> F
-    F --> I
-    
-    subgraph "AWS Infrastructure (ap-south-1)"
-        F
-        G
-        H
-        I
-        D
-    end
-```
+This project demonstrates:
+- **Containerized Lambda Functions**: React app deployed as container images
+- **Multi-Environment Infrastructure**: Separate dev, staging, and production environments
+- **Infrastructure as Code**: Complete AWS infrastructure managed with Terraform
+- **CI/CD Automation**: GitHub Actions with OIDC authentication for secure deployments
+- **Monitoring & Logging**: CloudWatch dashboards, alarms, and X-Ray tracing
 
-## Features
+## 📋 Prerequisites
 
-### Core Infrastructure
-- **VPC**: Multi-AZ setup with public and private subnets
-- **AWS Lambda**: Container-based functions with proper IAM roles
-- **API Gateway**: RESTful API with proper integration
-- **ECR**: Container registry with lifecycle policies
-- **Monitoring**: CloudWatch Logs, Metrics, Alarms, and X-Ray tracing
+- AWS Account with OIDC provider configured
+- GitHub repository with Actions enabled
+- Local development environment:
+  - Node.js 18+
+  - Docker
+  - Terraform 1.6+
+  - AWS CLI configured
 
-### DevOps Best Practices
-- **Infrastructure as Code**: Modular Terraform configuration
-- **CI/CD Pipeline**: Automated build, test, and deployment
-- **Multi-Environment**: Support for dev, staging, and prod
-- **State Management**: Remote state with S3 and native locking
-- **Security**: Least privilege IAM, VPC isolation, encryption
+## 🔐 OIDC Setup
 
-## Project Structure
+This project uses OpenID Connect (OIDC) for secure authentication with AWS. The GitHub Actions workflows assume you have:
 
-```
-├── terraform/                 # Terraform infrastructure code
-│   ├── modules/              # Reusable Terraform modules
-│   │   ├── vpc/             # VPC and networking
-│   │   ├── ecr/             # ECR repository
-│   │   ├── lambda/          # Lambda function
-│   │   ├── api_gateway/     # API Gateway
-│   │   └── monitoring/      # CloudWatch and X-Ray
-│   ├── environments/        # Environment-specific configs
-│   │   ├── dev/
-│   │   ├── staging/
-│   │   └── prod/
-│   ├── main.tf             # Main Terraform configuration
-│   ├── variables.tf        # Input variables
-│   └── outputs.tf          # Output values
-├── app/                    # Application code
-│   ├── app.py             # Lambda function handler
-│   └── requirements.txt   # Python dependencies
-├── .github/workflows/     # GitHub Actions workflows
-│   ├── terraform.yml      # Infrastructure CI/CD
-│   ├── build-and-deploy.yml # Application CI/CD
-│   └── setup-backend.yml  # Backend setup
-├── scripts/               # Utility scripts
-│   ├── setup-terraform-backend.sh
-│   └── deploy.sh
-├── Dockerfile            # Container definition
-└── README.md            # This file
-```
+1. **OIDC Identity Provider** configured in AWS IAM
+2. **IAM Role** with trust policy for GitHub Actions: `arn:aws:iam::199570228070:role/oidc-demo-role`
 
-## Prerequisites
+### Required IAM Permissions
 
-- AWS CLI configured with appropriate permissions
-- Terraform >= 1.5.0
-- Docker
-- GitHub repository with required secrets
+The OIDC role should have permissions for:
+- EC2 (VPC, Subnets, Security Groups)
+- Lambda (Functions, Permissions)
+- ECR (Repositories, Images)
+- API Gateway (APIs, Routes, Stages)
+- CloudWatch (Log Groups, Dashboards, Alarms)
+- IAM (Roles, Policies)
 
-## Required GitHub Secrets
+## 🚀 Quick Start
 
-Set these secrets in your GitHub repository:
+### 1. Clone and Setup
 
 ```bash
-AWS_ACCESS_KEY_ID         # AWS access key
-AWS_SECRET_ACCESS_KEY     # AWS secret key
-TF_STATE_BUCKET          # S3 bucket for Terraform state (after backend setup)
-ECR_REPOSITORY_URI       # ECR repository URI (after first deployment)
-```
-
-## Quick Start
-
-### 1. Set Up Terraform Backend
-
-You have two options for setting up the S3 backend:
-
-#### Option A: Use Existing S3 Bucket
-
-1. Go to your repository's **Actions** tab
-2. Select **Setup Terraform Backend** workflow
-3. Click **Run workflow** and choose:
-   - **Action**: `use-existing`
-   - **Existing bucket**: `your-existing-bucket-name`
-4. Copy the output `TF_STATE_BUCKET` value to your GitHub secrets
-
-#### Option B: Create New S3 Bucket
-
-1. Go to your repository's **Actions** tab
-2. Select **Setup Terraform Backend** workflow
-3. Click **Run workflow** and choose **create**
-4. Copy the output `TF_STATE_BUCKET` value to your GitHub secrets
-
-#### Option C: Use Script Locally
-
-```bash
-# Create new bucket
-./scripts/setup-terraform-backend.sh create
-
-# Or use existing bucket
-./scripts/setup-terraform-backend.sh use-existing your-existing-bucket-name
-```
-
-### 2. Initial Infrastructure Deployment
-
-```bash
-# Clone the repository
-git clone <your-repo-url>
+git clone <repository-url>
 cd hello-world-lambda
-
-# Set environment variables
-export TF_STATE_BUCKET="your-terraform-state-bucket"
-export AWS_REGION="ap-south-1"
-
-# Deploy to dev environment
-./scripts/deploy.sh dev
+npm install
 ```
 
-### 3. Set Up CI/CD
+### 2. Configure Terraform Backend
 
-1. Add the required secrets to your GitHub repository
-2. Push changes to trigger the CI/CD pipeline
-3. The pipeline will automatically deploy to different environments based on the branch
+The project uses an existing S3 bucket for Terraform state:
+- **Bucket**: `usecases-terraform-state-bucket`
+- **Key**: `usecase2/statefile.tfstate`
+- **Region**: `ap-south-1`
 
-## CI/CD Workflows
+### 3. Deploy Infrastructure
 
-### Backend Setup Workflow
-- **Trigger**: Manual workflow dispatch
-- **Actions**:
-  - Create new S3 bucket OR configure existing bucket
-  - Enable versioning and encryption
-  - Configure bucket for Terraform state storage
-  - Output bucket name for GitHub secrets
+#### Using GitHub Actions (Recommended)
 
-### Terraform Workflow
-- **Trigger**: Changes to `terraform/` directory
-- **Actions**:
-  - Validate and format check on all PRs
-  - Plan on pull requests (with PR comments)
-  - Apply on merge to main branch
+1. Go to **Actions** tab in your GitHub repository
+2. Select **AWS infra** workflow
+3. Click **Run workflow**
+4. Choose:
+   - **Action**: `apply` or `destroy`
+   - **Environment**: `dev`, `staging`, or `prod`
 
-### Build and Deploy Workflow
-- **Trigger**: Changes to `app/` or `Dockerfile`
-- **Actions**:
-  - Build and push Docker image to ECR
-  - Update Lambda functions across environments
-  - Run integration tests
+#### Using Local Scripts
 
-## Infrastructure Components
+```bash
+# Deploy to dev environment
+./scripts/deploy-environment.sh dev apply
 
-### VPC Module
-- Multi-AZ VPC with public and private subnets
-- NAT Gateways for private subnet internet access
-- Security groups with least privilege access
+# Plan changes for staging
+./scripts/deploy-environment.sh staging plan
 
-### Lambda Module
-- Container-based Lambda function
-- VPC configuration for secure networking
-- IAM roles with minimal required permissions
-- X-Ray tracing enabled
+# Destroy prod environment
+./scripts/deploy-environment.sh prod destroy
+```
 
-### API Gateway Module
-- RESTful API with proxy integration
-- CloudWatch logging enabled
-- CORS configuration
+### 4. Build and Deploy Application
 
-### Monitoring Module
-- CloudWatch log groups with retention policies
-- Custom dashboards for metrics visualization
-- Alarms for error rates and performance
-- SNS topics for alerting
+The CI/CD pipeline automatically:
+- Tests and builds the application
+- Creates Docker images
+- Pushes to ECR
+- Updates Lambda functions
 
-## Monitoring and Observability
+## 🏗️ Infrastructure Components
+
+### Core AWS Resources
+
+- **VPC**: Multi-AZ setup with public/private subnets
+- **Lambda**: Container-based functions with VPC integration
+- **API Gateway**: HTTP API for Lambda invocation
+- **ECR**: Container registry for Docker images
+- **CloudWatch**: Logging, monitoring, and alerting
+- **X-Ray**: Distributed tracing
+
+### Terraform Structure
+
+```
+terraform/
+├── main.tf                 # Root configuration with S3 backend
+├── variables.tf           # Variable definitions
+├── outputs.tf            # Output values
+├── modules/              # Reusable modules
+│   ├── vpc/             # VPC and networking
+│   ├── ecr/             # Container registry
+│   ├── iam/             # IAM roles and policies
+│   ├── lambda/          # Lambda functions
+│   ├── api_gateway/     # API Gateway
+│   └── cloudwatch/      # Monitoring
+└── environments/        # Environment-specific configs
+    ├── dev/
+    ├── staging/
+    └── prod/
+```
+
+## 🔄 CI/CD Pipeline
+
+### Infrastructure Workflow (`terraform.yml`)
+- **Manual Trigger**: Workflow dispatch with environment and action selection
+- **Lint & Security**: TFLint validation and formatting checks
+- **OIDC Authentication**: Secure AWS access without long-lived credentials
+- **Multi-Environment**: Support for dev, staging, and prod
+
+### Application Workflow (`build-and-deploy.yml`)
+- **Automated Triggers**: Push to main/develop branches
+- **Testing**: Lint and build validation
+- **Container Build**: Docker image creation and ECR push
+- **Lambda Update**: Automatic function code updates
+
+## 📊 Monitoring
 
 ### CloudWatch Dashboards
-Access your monitoring dashboard:
-```
-https://console.aws.amazon.com/cloudwatch/home?region=ap-south-1#dashboards
-```
-
-### Key Metrics Monitored
-- Lambda invocation count and duration
-- Error rates and success rates
-- API Gateway latency and error rates
-- Memory and timeout utilization
+- Lambda execution metrics (duration, errors, invocations)
+- API Gateway performance metrics
+- Custom alarms for error rates and performance
 
 ### X-Ray Tracing
-View distributed traces:
-```
-https://console.aws.amazon.com/xray/home?region=ap-south-1#/service-map
-```
+- End-to-end request tracing
+- Performance bottleneck identification
+- Service dependency mapping
 
-## Local Development
+## 🔒 Security Features
 
-### Testing Lambda Function Locally
+- **OIDC Authentication**: No long-lived AWS credentials in GitHub
+- **IAM Least Privilege**: Minimal required permissions
+- **VPC Isolation**: Lambda functions in private subnets
+- **Encryption**: S3 state encryption, CloudWatch logs encryption
+- **Container Scanning**: ECR vulnerability scanning enabled
+
+## 🌍 Multi-Environment Support
+
+Each environment has:
+- Separate Terraform state in S3
+- Environment-specific variables
+- Isolated AWS resources
+- Independent CI/CD workflows
+
+### Environment Configuration
+
+| Environment | VPC CIDR | Lambda Memory | Timeout | Region |
+|------------|----------|---------------|---------|---------|
+| Dev | 10.0.0.0/16 | 256 MB | 15s | ap-south-1 |
+| Staging | 10.1.0.0/16 | 512 MB | 30s | ap-south-1 |
+| Production | 10.2.0.0/16 | 1024 MB | 60s | ap-south-1 |
+
+## 🛠️ Local Development
+
+### Run Application Locally
 ```bash
-cd app
-python app.py
+npm run dev
 ```
 
-### Building Docker Image Locally
+### Test Docker Container
 ```bash
 docker build -t hello-world-lambda .
 docker run -p 9000:8080 hello-world-lambda
 ```
 
-### Testing with Docker
+### Terraform Commands
 ```bash
-curl -XPOST "http://localhost:9000/2015-03-31/functions/function/invocations" -d '{}'
+cd terraform
+
+# Format code
+terraform fmt -recursive
+
+# Validate configuration
+terraform validate
+
+# Plan changes
+terraform plan -var-file=environments/dev/terraform.tfvars
+
+# Apply changes
+terraform apply -var-file=environments/dev/terraform.tfvars
 ```
 
-## Multi-Environment Management
+## 📈 Monitoring & Alerts
 
-### Environment Differences
-- **Dev**: Minimal resources, relaxed monitoring
-- **Staging**: Production-like setup for testing
-- **Prod**: High availability, strict monitoring, encryption
+### Key Metrics Monitored
+- Lambda function errors and duration
+- API Gateway latency and error rates
+- ECR image vulnerabilities
+- Cost optimization opportunities
 
-### Deploying to Specific Environment
-```bash
-# Deploy to staging
-./scripts/deploy.sh staging
+### Automated Alerts
+- High error rates (>5 errors in 5 minutes)
+- High latency (>10 seconds average)
+- Failed deployments
 
-# Deploy to production
-./scripts/deploy.sh prod
-```
-
-## Security Considerations
-
-### IAM Security
-- Least privilege principle applied to all roles
-- No hardcoded credentials
-- Regular access review recommended
-
-### Network Security
-- Lambda functions in private subnets
-- Security groups with minimal required access
-
-### Data Security
-- Encryption at rest for S3
-- Encryption in transit for all communications
-- CloudWatch logs encryption
-
-## Troubleshooting
+## 🔧 Troubleshooting
 
 ### Common Issues
 
-1. **Terraform State Lock**
-   ```bash
-   # S3 lockfile will automatically resolve conflicts
-   # If needed, check S3 bucket for .terraform.lock files
-   ```
+1. **OIDC Authentication Issues**
+   - Verify OIDC provider configuration in AWS
+   - Check IAM role trust policy
+   - Ensure correct role ARN in workflows
 
-2. **Lambda Function Not Updating**
-   ```bash
-   # Check if image exists in ECR
-   aws ecr describe-images --repository-name hello-world-lambda
-   ```
+2. **Terraform State Issues**
+   - Verify S3 bucket access permissions
+   - Check state file path and region
 
-3. **API Gateway 502 Errors**
-   - Check Lambda function logs in CloudWatch
-   - Verify VPC configuration and NAT Gateway connectivity
+3. **Lambda Container Issues**
+   - Verify Dockerfile Lambda compatibility
+   - Check ECR repository permissions
 
-### Debugging Commands
+### Useful Commands
+
 ```bash
-# Check Lambda function status
-aws lambda get-function --function-name hello-world-lambda-dev-hello-world
+# Check Lambda logs
+aws logs tail /aws/lambda/hello-world-lambda-dev-app --follow --region ap-south-1
 
-# View recent logs
-aws logs tail /aws/lambda/hello-world-lambda-dev-hello-world --follow
+# List ECR images
+aws ecr list-images --repository-name hello-world-lambda-dev-app --region ap-south-1
 
-# Test API Gateway endpoint
-curl -v https://your-api-id.execute-api.ap-south-1.amazonaws.com/dev
+# Test API Gateway
+curl -X GET https://your-api-gateway-url.amazonaws.com/
 ```
 
+## 📚 Additional Resources
+
+- [AWS Lambda Container Images](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
+- [GitHub OIDC with AWS](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)
+- [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

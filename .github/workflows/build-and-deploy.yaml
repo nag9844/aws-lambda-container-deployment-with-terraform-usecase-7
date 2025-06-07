@@ -2,12 +2,14 @@ name: 'Build and Deploy Application'
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [ main, develop ]
     paths:
-      - 'app/**'
+      - 'src/**'
+      - 'lambda/**'
       - 'Dockerfile'
+      - 'package.json'
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       environment:
@@ -19,338 +21,89 @@ on:
           - dev
           - staging
           - prod
-        
+
 permissions:
   id-token: write
-  contents: read           
-  pull-requests: write
+  contents: read
 
 env:
-  AWS_REGION: 'ap-south-1'
+  AWS_REGION: ap-south-1
 
 jobs:
+  test:
+    name: 'Test Application'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run linting
+      run: npm run lint
+    
+    - name: Build application
+      run: npm run build
+
   build-and-push:
-    name: 'Build and Push Docker Image'
+    name: 'Build and Push Container'
     runs-on: ubuntu-latest
-    outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
-      image-digest: ${{ steps.build.outputs.digest }}
-      ecr-uri: ${{ steps.get-ecr.outputs.ecr-uri }}
+    needs: test
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-BuildAndDeploy
-
-      - name: Update AWS CLI
-        run: |
-          echo "📦 Updating AWS CLI to latest version..."
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip awscliv2.zip
-          sudo ./aws/install --update
-          aws --version
-
-      - name: Verify AWS credentials
-        run: |
-          aws sts get-caller-identity
-          echo "✅ AWS credentials verified"
-
-      - name: Get or Create ECR Repository
-        id: get-ecr
-        run: |
-          REPO_NAME="hello-world-lambda-hello-world"
-          
-          # Try to get existing repository
-          if aws ecr describe-repositories --repository-names "$REPO_NAME" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "✅ ECR repository exists"
-            ECR_URI=$(aws ecr describe-repositories --repository-names "$REPO_NAME" --region ${{ env.AWS_REGION }} --query 'repositories[0].repositoryUri' --output text)
-          else
-            echo "📝 Creating ECR repository..."
-            aws ecr create-repository \
-              --repository-name "$REPO_NAME" \
-              --region ${{ env.AWS_REGION }} \
-              --image-scanning-configuration scanOnPush=true \
-              --encryption-configuration encryptionType=AES256
-            
-            ECR_URI=$(aws ecr describe-repositories --repository-names "$REPO_NAME" --region ${{ env.AWS_REGION }} --query 'repositories[0].repositoryUri' --output text)
-            
-            # Set lifecycle policy
-            aws ecr put-lifecycle-policy \
-              --repository-name "$REPO_NAME" \
-              --region ${{ env.AWS_REGION }} \
-              --lifecycle-policy-text '{
-                "rules": [
-                  {
-                    "rulePriority": 1,
-                    "description": "Keep last 10 images",
-                    "selection": {
-                      "tagStatus": "tagged",
-                      "tagPrefixList": ["v"],
-                      "countType": "imageCountMoreThan",
-                      "countNumber": 10
-                    },
-                    "action": {
-                      "type": "expire"
-                    }
-                  },
-                  {
-                    "rulePriority": 2,
-                    "description": "Delete untagged images older than 1 day",
-                    "selection": {
-                      "tagStatus": "untagged",
-                      "countType": "sinceImagePushed",
-                      "countUnit": "days",
-                      "countNumber": 1
-                    },
-                    "action": {
-                      "type": "expire"
-                    }
-                  }
-                ]
-              }'
-          fi
-          
-          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
-          echo "ecr-uri=$ECR_URI" >> $GITHUB_OUTPUT
-          echo "🐳 ECR Repository URI: $ECR_URI"
-
-      - name: Determine Environment
-        id: env
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "environment=prod" >> $GITHUB_OUTPUT
-          else
-            echo "environment=dev" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          mask-password: 'true'
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.ECR_URI }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix=${{ github.ref_name }}-
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push Docker image
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Output image details
-        run: |
-          echo "✅ Image built and pushed successfully!"
-          echo "📦 Image tags: ${{ steps.meta.outputs.tags }}"
-          echo "🔍 Image digest: ${{ steps.build.outputs.digest }}"
-          echo "🐳 ECR URI: ${{ env.ECR_URI }}"
-
-  update-lambda:
-    name: 'Update Lambda Functions'
-    runs-on: ubuntu-latest
-    needs: build-and-push
     strategy:
       matrix:
-        environment: [dev, staging, prod]
+        environment: 
+          - ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
     
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-UpdateLambda-${{ matrix.environment }}
-
-      - name: Update AWS CLI
-        run: |
-          echo "📦 Updating AWS CLI to latest version..."
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip awscliv2.zip
-          sudo ./aws/install --update
-          aws --version
-
-      - name: Update Lambda function to container image
-        run: |
-          FUNCTION_NAME="hello-world-lambda-${{ matrix.environment }}-hello-world"
-          IMAGE_URI="${{ needs.build-and-push.outputs.ecr-uri }}:latest"
-          
-          echo "🔄 Updating Lambda function: $FUNCTION_NAME"
-          echo "🐳 With image: $IMAGE_URI"
-          
-          # Check if function exists
-          if aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "✅ Function exists, updating..."
-            
-            # Get current function configuration
-            CURRENT_CONFIG=$(aws lambda get-function-configuration --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }})
-            CURRENT_PACKAGE_TYPE=$(echo "$CURRENT_CONFIG" | jq -r '.PackageType // "Zip"')
-            
-            echo "📋 Current package type: $CURRENT_PACKAGE_TYPE"
-            
-            if [ "$CURRENT_PACKAGE_TYPE" != "Image" ]; then
-              echo "📝 Converting function from Zip to Container image..."
-              
-              # For functions that need to be converted from Zip to Image,
-              # we need to recreate them as the package type cannot be changed
-              echo "⚠️ Cannot convert Zip package to Image package directly."
-              echo "💡 The function needs to be recreated with Terraform using Image package type."
-              echo "🔧 Please run 'terraform apply' to recreate the function with container support."
-              
-              # Instead, let's try to update the code if it's already an Image function
-              exit 0
-            else
-              echo "✅ Function already uses container images"
-              
-              # Update function code with container image
-              echo "🔄 Updating function code with container image..."
-              aws lambda update-function-code \
-                --function-name $FUNCTION_NAME \
-                --image-uri $IMAGE_URI \
-                --region ${{ env.AWS_REGION }}
-              
-              # Wait for code update to complete
-              echo "⏳ Waiting for code update to complete..."
-              aws lambda wait function-updated \
-                --function-name $FUNCTION_NAME \
-                --region ${{ env.AWS_REGION }}
-              
-              echo "✅ Lambda function updated successfully!"
-            fi
-          else
-            echo "⚠️ Function $FUNCTION_NAME does not exist. Skipping update."
-            echo "💡 Deploy infrastructure first using Terraform."
-          fi
-
-  test-deployment:
-    name: 'Test Deployment'
-    runs-on: ubuntu-latest
-    needs: update-lambda
-    strategy:
-      matrix:
-        environment: [dev, staging, prod]
+    - name: Checkout code
+      uses: actions/checkout@v4
     
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-TestDeployment-${{ matrix.environment }}
-
-      - name: Update AWS CLI
-        run: |
-          echo "📦 Updating AWS CLI to latest version..."
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip awscliv2.zip
-          sudo ./aws/install --update
-          aws --version
-
-      - name: Test Lambda function
-        run: |
-          FUNCTION_NAME="hello-world-lambda-${{ matrix.environment }}-hello-world"
-          
-          echo "🧪 Testing Lambda function: $FUNCTION_NAME"
-          
-          # Check if function exists before testing
-          if aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "📝 Invoking function..."
-            RESPONSE=$(aws lambda invoke \
-              --function-name $FUNCTION_NAME \
-              --payload '{}' \
-              --cli-binary-format raw-in-base64-out \
-              response.json \
-              --region ${{ env.AWS_REGION }})
-            
-            echo "📄 Lambda Response:"
-            cat response.json
-            echo ""
-            
-            # Check if the response contains expected content
-            if grep -q "Hello World" response.json; then
-              echo "✅ Lambda function test passed!"
-            else
-              echo "❌ Lambda function test failed!"
-              echo "Expected 'Hello World' in response"
-              exit 1
-            fi
-            
-            # Clean up
-            rm -f response.json
-          else
-            echo "⚠️ Function $FUNCTION_NAME does not exist. Skipping test."
-          fi
-
-      - name: Test API Gateway
-        run: |
-          API_NAME="hello-world-lambda-${{ matrix.environment }}-api"
-          
-          echo "🌐 Testing API Gateway: $API_NAME"
-          
-          API_ID=$(aws apigateway get-rest-apis \
-            --query "items[?name=='$API_NAME'].id" \
-            --output text \
-            --region ${{ env.AWS_REGION }})
-          
-          if [ ! -z "$API_ID" ] && [ "$API_ID" != "None" ]; then
-            API_URL="https://${API_ID}.execute-api.${{ env.AWS_REGION }}.amazonaws.com/${{ matrix.environment }}"
-            echo "🔗 API Gateway URL: $API_URL"
-            
-            # Test the API endpoint
-            echo "📡 Testing API endpoint..."
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL" || echo "000")
-            
-            if [ "$HTTP_STATUS" -eq 200 ]; then
-              echo "✅ API Gateway test passed! (Status: $HTTP_STATUS)"
-            else
-              echo "⚠️ API Gateway test returned status: $HTTP_STATUS"
-              # Don't fail the build for API Gateway issues as they might be infrastructure-related
-            fi
-          else
-            echo "⚠️ API Gateway not found for environment: ${{ matrix.environment }}"
-            echo "💡 Deploy infrastructure first using Terraform."
-          fi
-
-      - name: Output deployment summary
-        run: |
-          echo ""
-          echo "📊 Deployment Summary for ${{ matrix.environment }}:"
-          echo "✅ Docker image built and pushed"
-          echo "✅ Lambda function updated (if exists and supports containers)"
-          echo "✅ Tests completed"
-          echo ""
-          echo "💡 Important Notes:"
-          echo "- If Lambda function uses Zip packages, it needs to be recreated with Terraform"
-          echo "- Run 'terraform apply' to ensure functions support container images"
-          echo ""
-          echo "🔗 Useful links:"
-          echo "- ECR Repository: https://console.aws.amazon.com/ecr/repositories/hello-world-lambda-hello-world?region=${{ env.AWS_REGION }}"
-          echo "- Lambda Function: https://console.aws.amazon.com/lambda/home?region=${{ env.AWS_REGION }}#/functions/hello-world-lambda-${{ matrix.environment }}-hello-world"
-          echo "- CloudWatch Logs: https://console.aws.amazon.com/cloudwatch/home?region=${{ env.AWS_REGION }}#logsV2:log-groups/log-group/%2Faws%2Flambda%2Fhello-world-lambda-${{ matrix.environment }}-hello-world"
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    
+    - name: Build, tag, and push image to Amazon ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: hello-world-lambda-${{ matrix.environment }}-app
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+    
+    - name: Update Lambda function
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: hello-world-lambda-${{ matrix.environment }}-app
+        IMAGE_TAG: ${{ github.sha }}
+        FUNCTION_NAME: hello-world-lambda-${{ matrix.environment }}-app
+      run: |
+        aws lambda update-function-code \
+          --function-name $FUNCTION_NAME \
+          --image-uri $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+          --region ${{ env.AWS_REGION }}
+        
+        # Wait for function to be updated
+        aws lambda wait function-updated \
+          --function-name $FUNCTION_NAME \
+          --region ${{ env.AWS_REGION }}
+        
+        echo "✅ Lambda function $FUNCTION_NAME updated successfully"
