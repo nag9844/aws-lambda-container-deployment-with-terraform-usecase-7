@@ -48,8 +48,8 @@ module "vpc" {
 
   project_name       = var.project_name
   environment        = local.environment
-  vpc_cidr          = var.vpc_cidr
-  az_count          = var.az_count
+  vpc_cidr           = var.vpc_cidr
+  az_count           = var.az_count
   enable_nat_gateway = true
   enable_flow_logs   = true
 }
@@ -58,12 +58,9 @@ module "vpc" {
 module "ecr" {
   source = "../../modules/ecr"
 
-  project_name          = var.project_name
-  environment           = local.environment
-  image_tag_mutability  = "IMMUTABLE"
-  scan_on_push         = true
-  max_image_count      = 50   # Higher limit for production
-  untagged_image_days  = 30   # Longer retention for production
+  project_name   = var.project_name
+  environment    = local.environment
+  repository_name = "${var.project_name}-${local.environment}"
 }
 
 # Lambda Module
@@ -72,26 +69,21 @@ module "lambda" {
 
   project_name = var.project_name
   environment  = local.environment
-  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : local.default_image_uri
-  timeout      = 300  # 5 minutes max for production
-  memory_size  = 1024 # Higher memory for production
 
-  environment_variables = {
-    ENVIRONMENT = local.environment
-    LOG_LEVEL   = "WARN"
-  }
+  # Required attributes for your lambda module
+  ecr_repository_url = module.ecr.repository_url
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids  = module.vpc.private_subnet_ids
 
-  # VPC configuration for production security
-  vpc_config = {
-    subnet_ids         = module.vpc.private_subnet_ids
-    security_group_ids = [aws_security_group.lambda.id]
-  }
-
-  # Dead letter queue for failed invocations
-  dead_letter_target_arn = aws_sqs_queue.dlq.arn
-
-  log_retention_days = 30  # Longer retention for production
-  api_gateway_arn    = module.api_gateway.execution_arn
+  # Pass additional variables only if they are defined in the module's variables.tf
+  # For example, if your module supports environment_variables, timeout, memory_size, etc., add them here.
+  # environment_variables = {
+  #   ENVIRONMENT = local.environment
+  #   LOG_LEVEL   = "WARN"
+  # }
+  # timeout      = 300
+  # memory_size  = 1024
+  # dead_letter_target_arn = aws_sqs_queue.dlq.arn
 
   depends_on = [module.ecr]
 }
@@ -159,15 +151,10 @@ resource "aws_iam_role_policy" "lambda_dlq" {
 module "api_gateway" {
   source = "../../modules/api-gateway"
 
-  project_name      = var.project_name
-  environment       = local.environment
-  lambda_invoke_arn = module.lambda.function_invoke_arn
-  stage_name        = "prod"
-  
-  enable_access_logs = true
-  log_retention_days = 30
-  enable_metrics     = true
-  logging_level      = "ERROR"  # Less verbose logging for production
+  project_name         = var.project_name
+  environment          = local.environment
+  lambda_invoke_arn    = module.lambda.function_invoke_arn
+  lambda_function_name = module.lambda.function_name
 }
 
 # Monitoring Module
@@ -176,19 +163,8 @@ module "monitoring" {
 
   project_name         = var.project_name
   environment          = local.environment
-  aws_region          = var.aws_region
   lambda_function_name = module.lambda.function_name
-  api_gateway_name     = "${var.project_name}-api-${local.environment}"
-  
-  # Strict thresholds for production
-  lambda_error_threshold    = 3
-  lambda_duration_threshold = 5000
-  api_4xx_threshold        = 10
-  api_5xx_threshold        = 3
-  
-  create_sns_topic = true
-  alert_email      = var.alert_email
-  alarm_actions    = [module.monitoring.sns_topic_arn]
+  api_gateway_id       = module.api_gateway.api_gateway_id
 }
 
 # X-Ray tracing for production observability
