@@ -29,13 +29,7 @@ resource "aws_api_gateway_method" "proxy" {
   resource_id   = aws_api_gateway_resource.proxy.id
   http_method   = "ANY"
   authorization = var.authorization_type
-
-  dynamic "authorizer_id" {
-    for_each = var.authorizer_id != null ? [var.authorizer_id] : []
-    content {
-      authorizer_id = authorizer_id.value
-    }
-  }
+  authorizer_id = var.authorizer_id
 }
 
 # API Gateway Method for root resource
@@ -44,13 +38,7 @@ resource "aws_api_gateway_method" "root" {
   resource_id   = aws_api_gateway_rest_api.main.root_resource_id
   http_method   = "ANY"
   authorization = var.authorization_type
-
-  dynamic "authorizer_id" {
-    for_each = var.authorizer_id != null ? [var.authorizer_id] : []
-    content {
-      authorizer_id = authorizer_id.value
-    }
-  }
+  authorizer_id = var.authorizer_id
 }
 
 # API Gateway Integration for proxy resource
