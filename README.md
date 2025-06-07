@@ -84,22 +84,22 @@ graph TB
 This project uses your existing Terraform state infrastructure with file-based locking:
 
 - **S3 Bucket**: `usecases-terraform-state-bucket`
-- **State Key Pattern**: `usecase6/{environment}/terraform.tfstate`
+- **State Key Pattern**: `usecase7/{environment}/terraform.tfstate`
 - **Region**: `ap-south-1`
 - **Encryption**: Enabled
 - **Locking**: File-based locking (`use_lockfile = true`)
 
 ### Environment State Keys:
-- **Dev**: `usecase6/dev/terraform.tfstate`
-- **Staging**: `usecase6/staging/terraform.tfstate`
-- **Prod**: `usecase6/prod/terraform.tfstate`
+- **Dev**: `usecase7/dev/terraform.tfstate`
+- **Staging**: `usecase7/staging/terraform.tfstate`
+- **Prod**: `usecase7/prod/terraform.tfstate`
 
 ### State Locking Mechanism:
 ```hcl
 terraform {
   backend "s3" {
     bucket        = "usecases-terraform-state-bucket"
-    key           = "usecase6/statefile.tfstate"
+    key           = "usecase7/statefile.tfstate"
     region        = "ap-south-1"
     encrypt       = true
     use_lockfile  = true
@@ -181,19 +181,19 @@ The project solves the "Lambda expecting Docker image from ECR" challenge throug
 ### Development Environment
 - **Purpose**: Development and testing
 - **VPC CIDR**: 10.0.0.0/16
-- **State Key**: `usecase6/dev/terraform.tfstate`
+- **State Key**: `usecase7/dev/terraform.tfstate`
 - **Resources**: Minimal configuration for cost optimization
 
 ### Staging Environment
 - **Purpose**: Pre-production testing
 - **VPC CIDR**: 10.1.0.0/16
-- **State Key**: `usecase6/staging/terraform.tfstate`
+- **State Key**: `usecase7/staging/terraform.tfstate`
 - **Resources**: Production-like configuration
 
 ### Production Environment
 - **Purpose**: Live production workloads
 - **VPC CIDR**: 10.2.0.0/16
-- **State Key**: `usecase6/prod/terraform.tfstate`
+- **State Key**: `usecase7/prod/terraform.tfstate`
 - **Resources**: High availability and performance
 
 ## API Usage
@@ -282,7 +282,7 @@ aws lambda invoke --function-name hello-world-lambda-dev response.json
 aws ecr list-images --repository-name hello-world-lambda-dev
 
 # Check for stuck lock files
-aws s3 ls s3://usecases-terraform-state-bucket/usecase6/ --recursive | grep .tflock
+aws s3 ls s3://usecases-terraform-state-bucket/usecase7/ --recursive | grep .tflock
 ```
 
 ## Workflow Commands
@@ -327,7 +327,7 @@ The project uses your existing state bucket with file-based locking:
 terraform {
   backend "s3" {
     bucket        = "usecases-terraform-state-bucket"
-    key           = "usecase6/statefile.tfstate"
+    key           = "usecase7/statefile.tfstate"
     region        = "ap-south-1"
     encrypt       = true
     use_lockfile  = true
@@ -338,14 +338,14 @@ terraform {
 ### Environment Separation
 
 Each environment maintains its own state file:
-- **Dev**: `usecase6/dev/terraform.tfstate`
-- **Staging**: `usecase6/staging/terraform.tfstate`
-- **Prod**: `usecase6/prod/terraform.tfstate`
+- **Dev**: `usecase7/dev/terraform.tfstate`
+- **Staging**: `usecase7/staging/terraform.tfstate`
+- **Prod**: `usecase7/prod/terraform.tfstate`
 
 ### Lock File Management
 
 Terraform automatically creates and manages lock files in S3:
-- **Lock Files**: `usecase6/{environment}/terraform.tfstate.tflock`
+- **Lock Files**: `usecase7/{environment}/terraform.tfstate.tflock`
 - **Automatic Cleanup**: Terraform removes lock files after operations
 - **Conflict Prevention**: Multiple users cannot modify state simultaneously
 
