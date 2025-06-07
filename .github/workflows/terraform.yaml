@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - develop
     paths:
       - 'terraform/**'
   pull_request:
@@ -41,7 +42,7 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Terraform Format Check
-        run: terraform fmt  -recursive terraform/
+        run: terraform fmt -check -recursive terraform/
         continue-on-error: false
 
       - name: Terraform Init
@@ -85,7 +86,9 @@ jobs:
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=hello-world-lambda/${{ matrix.environment }}/terraform.tfstate" \
-            -backend-config="region=${{ env.AWS_REGION }}" 
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true" \
+            -backend-config="encrypt=true"
 
       - name: Terraform Plan
         id: plan
@@ -160,7 +163,9 @@ jobs:
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=hello-world-lambda/${{ steps.env.outputs.environment }}/terraform.tfstate" \
-            -backend-config="region=${{ env.AWS_REGION }}" 
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true" \
+            -backend-config="encrypt=true"
 
       - name: Terraform Apply
         run: |
@@ -182,7 +187,8 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role # Replace with your actual IAM role ARN
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
@@ -196,7 +202,9 @@ jobs:
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=hello-world-lambda/${{ github.event.inputs.environment }}/terraform.tfstate" \
-            -backend-config="region=${{ env.AWS_REGION }}" 
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true" \
+            -backend-config="encrypt=true"
 
       - name: Terraform Apply
         run: |

@@ -1,0 +1,111 @@
+name: 'Setup Terraform Backend'
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'create'
+        type: choice
+        options:
+          - create
+          - destroy
+
+env:
+  AWS_REGION: 'ap-south-1'
+  PROJECT_NAME: 'hello-world-lambda'
+
+jobs:
+  setup-backend:
+    name: 'Setup Terraform Backend Resources'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create S3 Bucket for Terraform State
+        if: github.event.inputs.action == 'create'
+        run: |
+          BUCKET_NAME="${PROJECT_NAME}-terraform-state-$(date +%s)"
+          echo "Creating S3 bucket: $BUCKET_NAME"
+          
+          # Create bucket (ap-south-1 requires LocationConstraint)
+          aws s3api create-bucket \
+            --bucket "$BUCKET_NAME" \
+            --region "$AWS_REGION" \
+            --create-bucket-configuration LocationConstraint="$AWS_REGION"
+          
+          # Enable versioning (required for lockfile)
+          aws s3api put-bucket-versioning \
+            --bucket "$BUCKET_NAME" \
+            --versioning-configuration Status=Enabled
+          
+          # Enable encryption
+          aws s3api put-bucket-encryption \
+            --bucket "$BUCKET_NAME" \
+            --server-side-encryption-configuration '{
+              "Rules": [
+                {
+                  "ApplyServerSideEncryptionByDefault": {
+                    "SSEAlgorithm": "AES256"
+                  }
+                }
+              ]
+            }'
+          
+          # Block public access
+          aws s3api put-public-access-block \
+            --bucket "$BUCKET_NAME" \
+            --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          
+          echo "S3_BUCKET_NAME=$BUCKET_NAME" >> $GITHUB_ENV
+          echo "S3 bucket created: $BUCKET_NAME"
+
+      - name: Output Backend Configuration
+        if: github.event.inputs.action == 'create'
+        run: |
+          echo "Terraform Backend Setup Complete!"
+          echo ""
+          echo "Add this to your GitHub Secrets:"
+          echo "TF_STATE_BUCKET: $S3_BUCKET_NAME"
+          echo ""
+          echo "Backend configuration for terraform/main.tf:"
+          echo "terraform {"
+          echo "  backend \"s3\" {"
+          echo "    bucket         = \"$S3_BUCKET_NAME\""
+          echo "    key            = \"hello-world-lambda/\${var.environment}/terraform.tfstate\""
+          echo "    region         = \"$AWS_REGION\""
+          echo "    use_lockfile   = true"
+          echo "    encrypt        = true"
+          echo "  }"
+          echo "}"
+
+      - name: Destroy Backend Resources
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          echo "This will destroy the Terraform backend resources!"
+          echo "Make sure you have backed up any important state files."
+          
+          # List and delete all objects in the bucket
+          BUCKET_NAME="${{ secrets.TF_STATE_BUCKET }}"
+          if [ ! -z "$BUCKET_NAME" ]; then
+            echo "Emptying S3 bucket: $BUCKET_NAME"
+            aws s3 rm s3://$BUCKET_NAME --recursive
+            
+            echo "Deleting S3 bucket: $BUCKET_NAME"
+            aws s3api delete-bucket --bucket "$BUCKET_NAME" --region "$AWS_REGION"
+            
+            echo "Backend resources destroyed"
+          else
+            echo "TF_STATE_BUCKET secret not found"
+          fi

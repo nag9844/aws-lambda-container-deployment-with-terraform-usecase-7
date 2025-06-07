@@ -9,6 +9,7 @@ terraform {
 
   backend "s3" {
     # Configuration will be provided via backend config file
+    # use_lockfile = true will be set via backend config
   }
 }
 
@@ -58,6 +59,7 @@ module "lambda" {
   ecr_repository_uri = module.ecr.repository_uri
   vpc_id          = module.vpc.vpc_id
   private_subnet_ids = module.vpc.private_subnet_ids
+  lambda_security_group_id = module.vpc.lambda_security_group_id
   
   depends_on = [module.ecr]
 }
@@ -70,6 +72,7 @@ module "api_gateway" {
   project_name        = var.project_name
   lambda_function_arn = module.lambda.function_arn
   lambda_function_name = module.lambda.function_name
+  lambda_invoke_arn   = module.lambda.invoke_arn
 }
 
 # Monitoring Module

@@ -26,7 +26,7 @@ fi
 
 # Check if required secrets are set
 if [[ -z "$TF_STATE_BUCKET" ]]; then
-    echo "Required environment variables not set:"
+    echo "Required environment variable not set:"
     echo "   TF_STATE_BUCKET"
     exit 1
 fi
@@ -37,7 +37,9 @@ cd terraform
 terraform init \
     -backend-config="bucket=$TF_STATE_BUCKET" \
     -backend-config="key=hello-world-lambda/$ENVIRONMENT/terraform.tfstate" \
-    -backend-config="region=$AWS_REGION" 
+    -backend-config="region=$AWS_REGION" \
+    -backend-config="use_lockfile=true" \
+    -backend-config="encrypt=true"
 
 # Plan Terraform changes
 echo "Planning Terraform changes..."

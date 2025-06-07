@@ -20,9 +20,8 @@ on:
           - staging
           - prod
 
-
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION || 'ap-south-1' }}
+  AWS_REGION: 'ap-south-1'
 
 jobs:
   build-and-push:
@@ -32,12 +31,6 @@ jobs:
       image-tag: ${{ steps.meta.outputs.tags }}
       image-digest: ${{ steps.build.outputs.digest }}
     
-    permissions:
-      contents: write
-      pull-requests: write
-      id-token: write
-    
-    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,7 +38,8 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role # Replace with your actual IAM role ARN
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Determine Environment
@@ -100,7 +94,8 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role # Replace with your actual IAM role ARN
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Update Lambda function
@@ -135,7 +130,8 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role # Replace with your actual IAM role ARN
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Test Lambda function
@@ -155,9 +151,9 @@ jobs:
           
           # Check if the response contains expected content
           if grep -q "Hello World" response.json; then
-            echo " Lambda function test passed!"
+            echo "Lambda function test passed!"
           else
-            echo " Lambda function test failed!"
+            echo "Lambda function test failed!"
             exit 1
           fi
 
@@ -176,10 +172,10 @@ jobs:
             # Test the API endpoint
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL")
             if [ "$HTTP_STATUS" -eq 200 ]; then
-              echo " API Gateway test passed!"
+              echo "API Gateway test passed!"
             else
-              echo " API Gateway test failed with status: $HTTP_STATUS"
+              echo "API Gateway test failed with status: $HTTP_STATUS"
             fi
           else
-            echo "  API Gateway not found for environment: ${{ matrix.environment }}"
+            echo "API Gateway not found for environment: ${{ matrix.environment }}"
           fi

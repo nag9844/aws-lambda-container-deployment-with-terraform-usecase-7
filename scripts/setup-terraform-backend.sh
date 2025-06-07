@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script to set up Terraform backend resources (S3 bucket)
+# Script to set up Terraform backend resources (S3 bucket only)
 # This should be run once before using Terraform
 
 set -e
@@ -20,12 +20,9 @@ echo "Creating S3 bucket..."
 aws s3api create-bucket \
     --bucket "$BUCKET_NAME" \
     --region "$AWS_REGION" \
-    --create-bucket-configuration LocationConstraint="$AWS_REGION" 2>/dev/null || \
-aws s3api create-bucket \
-    --bucket "$BUCKET_NAME" \
-    --region "$AWS_REGION"
+    --create-bucket-configuration LocationConstraint="$AWS_REGION"
 
-# Enable versioning on the bucket
+# Enable versioning on the bucket (required for lockfile)
 echo "Enabling S3 bucket versioning..."
 aws s3api put-bucket-versioning \
     --bucket "$BUCKET_NAME" \
@@ -52,11 +49,9 @@ aws s3api put-public-access-block \
     --public-access-block-configuration \
     BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 
-
-
 echo "Terraform backend resources created successfully!"
 echo ""
-echo "Add these to your GitHub Secrets:"
+echo "Add this to your GitHub Secrets:"
 echo "TF_STATE_BUCKET: $BUCKET_NAME"
 echo ""
 echo "Backend configuration for Terraform:"
@@ -65,7 +60,7 @@ echo "  backend \"s3\" {"
 echo "    bucket         = \"$BUCKET_NAME\""
 echo "    key            = \"hello-world-lambda/\${var.environment}/terraform.tfstate\""
 echo "    region         = \"$AWS_REGION\""
-echo "    use_lockfile = true"
+echo "    use_lockfile   = true"
 echo "    encrypt        = true"
 echo "  }"
 echo "}"

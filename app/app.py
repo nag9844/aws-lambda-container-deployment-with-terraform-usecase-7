@@ -97,9 +97,9 @@ def lambda_handler(event, context):
     </head>
     <body>
         <div class="container">
-            <h1> Hello World!</h1>
+            <h1>Hello World!</h1>
             <p class="subtitle">Successfully deployed with AWS Lambda + Container + Terraform</p>
-            <div class="success-badge"> Deployment Successful</div>
+            <div class="success-badge">Deployment Successful</div>
             
             <div class="info-grid">
                 <div class="info-card">
