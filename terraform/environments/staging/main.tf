@@ -62,7 +62,7 @@ module "lambda" {
 
   project_name = var.project_name
   environment  = local.environment
-  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : "${data.aws_ecr_repository.main.repository_uri}:latest"
+  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : "${data.aws_ecr_repository.main.repository_ur}:latest"
   timeout      = 60
   memory_size  = 512
 
