@@ -1,7 +1,7 @@
 # Staging Environment Configuration
 
 terraform {
-  required_version = ">= 1.12.0"
+  required_version = ">= 1.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -33,14 +33,16 @@ provider "aws" {
 # Local variables
 locals {
   environment = "staging"
-  
-  # Default ECR image URI for initial deployment
-  default_image_uri = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/${var.project_name}-${local.environment}:latest"
 }
 
 # Data sources
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
+
+# Data source to get existing ECR repository (created by ECR workflow)
+data "aws_ecr_repository" "main" {
+  name = "${var.project_name}-${local.environment}"
+}
 
 # VPC Module
 module "vpc" {
@@ -54,25 +56,13 @@ module "vpc" {
   enable_flow_logs   = true
 }
 
-# ECR Module
-module "ecr" {
-  source = "../../modules/ecr"
-
-  project_name          = var.project_name
-  environment           = local.environment
-  image_tag_mutability  = "IMMUTABLE"  # More restrictive for staging
-  scan_on_push         = true
-  max_image_count      = 15
-  untagged_image_days  = 7
-}
-
 # Lambda Module
 module "lambda" {
   source = "../../modules/lambda"
 
   project_name = var.project_name
   environment  = local.environment
-  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : local.default_image_uri
+  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : "${data.aws_ecr_repository.main.repository_uri}:latest"
   timeout      = 60
   memory_size  = 512
 
@@ -89,8 +79,6 @@ module "lambda" {
 
   log_retention_days = 14
   api_gateway_arn    = module.api_gateway.execution_arn
-
-  depends_on = [module.ecr]
 }
 
 # Security Group for Lambda (if VPC config is enabled)
@@ -117,6 +105,7 @@ resource "aws_security_group" "lambda" {
 # API Gateway Module
 module "api_gateway" {
   source = "../../modules/api-gateway"
+
   project_name      = var.project_name
   environment       = local.environment
   lambda_invoke_arn = module.lambda.function_invoke_arn
@@ -131,6 +120,7 @@ module "api_gateway" {
 # Monitoring Module
 module "monitoring" {
   source = "../../modules/monitoring"
+
   project_name         = var.project_name
   environment          = local.environment
   aws_region          = var.aws_region

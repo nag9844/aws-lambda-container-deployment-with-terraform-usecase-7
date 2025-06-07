@@ -1,10 +1,5 @@
 # ECR Module - Create ECR repository for container images
 
-# Data source to check if repository exists
-data "aws_ecr_repository" "existing" {
-  name = "${var.project_name}-${var.environment}"
-}
-
 resource "aws_ecr_repository" "main" {
   name                 = "${var.project_name}-${var.environment}"
   image_tag_mutability = var.image_tag_mutability

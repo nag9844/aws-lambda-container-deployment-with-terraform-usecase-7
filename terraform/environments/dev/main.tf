@@ -1,7 +1,7 @@
 # Development Environment Configuration
 
 terraform {
-  required_version = ">= 1.12.0"
+  required_version = ">= 1.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -33,18 +33,21 @@ provider "aws" {
 # Local variables
 locals {
   environment = "dev"
-  
-  # Default ECR image URI for initial deployment
-  default_image_uri = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/${var.project_name}-${local.environment}:latest"
 }
 
 # Data sources
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
+# Data source to get existing ECR repository (created by ECR workflow)
+data "aws_ecr_repository" "main" {
+  name = "${var.project_name}-${local.environment}"
+}
+
 # VPC Module
 module "vpc" {
   source = "../../modules/vpc"
+
   project_name       = var.project_name
   environment        = local.environment
   vpc_cidr          = var.vpc_cidr
@@ -53,24 +56,13 @@ module "vpc" {
   enable_flow_logs   = false  # Disabled for dev to save costs
 }
 
-# ECR Module
-module "ecr" {
-  source = "../../modules/ecr"
-  project_name          = var.project_name
-  environment           = local.environment
-  image_tag_mutability  = "MUTABLE"
-  scan_on_push         = true
-  max_image_count      = 5   # Lower limit for dev
-  untagged_image_days  = 3   # Shorter retention for dev
-}
-
 # Lambda Module
 module "lambda" {
   source = "../../modules/lambda"
 
   project_name = var.project_name
   environment  = local.environment
-  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : local.default_image_uri
+  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : "${data.aws_ecr_repository.main.repository_uri}:latest"
   timeout      = 30
   memory_size  = 256
 
@@ -91,8 +83,6 @@ module "lambda" {
   }
 
   log_retention_days = 7  # Shorter retention for dev
-
-  depends_on = [module.ecr]
 }
 
 # API Gateway Module
