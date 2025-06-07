@@ -5,7 +5,7 @@ output "vpc_id" {
 
 output "ecr_repository_url" {
   description = "URI of the ECR repository"
-  value       = module.ecr.repository_uri
+  value       = module.ecr.repository_url
 }
 
 output "lambda_function_arn" {
@@ -45,7 +45,7 @@ output "deployment_summary" {
     environment           = "dev"
     api_gateway_url      = module.api_gateway.api_url
     lambda_function_url  = module.lambda.function_url
-    ecr_repository_url   = module.ecr.repository_uri
+    ecr_repository_url   = module.ecr.repository_url
     dashboard_url        = module.monitoring.dashboard_url
   }
 }
