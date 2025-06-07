@@ -1,0 +1,163 @@
+name: 'Deploy Infrastructure'
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform Action'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - apply
+          - destroy
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  lint-and-security:
+    name: Lint and Security Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Install TFLint
+        run: |
+          wget https://github.com/terraform-linters/tflint/releases/download/v0.50.2/tflint_linux_amd64.zip
+          unzip tflint_linux_amd64.zip
+          sudo mv tflint /usr/local/bin/
+          tflint --version
+
+      - name: Check Terraform formatting
+        run: |
+          cd terraform
+          terraform fmt -check -recursive
+
+      - name: Run TFLint
+        run: |
+          cd terraform
+          tflint --init && tflint -f compact
+
+  check-ecr:
+    name: 'Verify ECR Repository - ${{ github.event.inputs.environment }}'
+    runs-on: ubuntu-latest
+    needs: lint-and-security
+    if: github.event.inputs.action == 'apply'
+    
+    env:
+      AWS_REGION: ap-south-1
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Check ECR repository and image
+      env:
+        ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
+      run: |
+        echo "🔍 Checking ECR repository: $ECR_REPOSITORY"
+        
+        # Check if repository exists
+        if ! aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region ${{ env.AWS_REGION }} 2>/dev/null; then
+          echo "❌ ECR repository $ECR_REPOSITORY does not exist!"
+          echo "Please run the 'Setup ECR Repository' workflow first."
+          exit 1
+        fi
+        
+        # Check if latest image exists
+        if ! aws ecr describe-images --repository-name $ECR_REPOSITORY --image-ids imageTag=latest --region ${{ env.AWS_REGION }} 2>/dev/null; then
+          echo "❌ No 'latest' image found in $ECR_REPOSITORY!"
+          echo "Please run the 'Setup ECR Repository' workflow first to push an initial image."
+          exit 1
+        fi
+        
+        echo "✅ ECR repository and image verified successfully"
+        
+        # Get image details
+        ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+        echo "📋 Repository URI: $ECR_REGISTRY/$ECR_REPOSITORY"
+        echo "📋 Latest image available for Lambda deployment"
+
+  terraform:
+    name: 'Terraform ${{ github.event.inputs.action }} - ${{ github.event.inputs.environment }}'
+    runs-on: ubuntu-latest
+    needs: [lint-and-security, check-ecr]
+    if: always() && (needs.lint-and-security.result == 'success') && (github.event.inputs.action == 'destroy' || needs.check-ecr.result == 'success')
+    
+    env:
+      AWS_REGION: ap-south-1
+      TF_VAR_environment: ${{ github.event.inputs.environment }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Initialize Terraform
+        run: terraform init
+
+      - name: Validate Terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        if: github.event.inputs.action == 'apply'
+        run: terraform plan -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -out=tfplan.binary
+
+      - name: Show Terraform Plan Summary
+        if: github.event.inputs.action == 'apply'
+        run: terraform show -no-color tfplan.binary
+
+      - name: Terraform Apply (from saved plan)
+        if: github.event.inputs.action == 'apply'
+        run: terraform apply -auto-approve tfplan.binary
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: terraform destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve
+
+      - name: Output Infrastructure Details
+        if: github.event.inputs.action == 'apply'
+        run: |
+          echo "## Infrastructure Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "### Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          terraform output >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Infrastructure is ready for application deployment!**" >> $GITHUB_STEP_SUMMARY

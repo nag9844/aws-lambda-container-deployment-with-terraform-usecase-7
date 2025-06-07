@@ -1,0 +1,194 @@
+name: 'Cleanup Environment'
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to cleanup'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      cleanup_level:
+        description: 'Cleanup level'
+        required: true
+        default: 'infrastructure-only'
+        type: choice
+        options:
+          - infrastructure-only
+          - complete-cleanup
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  confirm-cleanup:
+    name: 'Confirm Cleanup - ${{ github.event.inputs.environment }}'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Display cleanup plan
+      run: |
+        echo "## 🔥 Cleanup Plan for Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Cleanup Level: ${{ github.event.inputs.cleanup_level }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ github.event.inputs.cleanup_level }}" == "infrastructure-only" ]]; then
+          echo "**Infrastructure Only Cleanup will:**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Destroy Lambda function" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Destroy API Gateway" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Destroy VPC and networking" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Destroy IAM roles and policies" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Destroy CloudWatch resources" >> $GITHUB_STEP_SUMMARY
+          echo "- ❌ **Keep ECR repository and images**" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "**Complete Cleanup will:**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Destroy ALL infrastructure" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Delete ECR repository and ALL images" >> $GITHUB_STEP_SUMMARY
+          echo "- ⚠️ **This is IRREVERSIBLE!**" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "⚠️ **Warning: This action cannot be undone!**" >> $GITHUB_STEP_SUMMARY
+
+  destroy-infrastructure:
+    name: 'Destroy Infrastructure - ${{ github.event.inputs.environment }}'
+    runs-on: ubuntu-latest
+    needs: confirm-cleanup
+    
+    env:
+      TF_VAR_environment: ${{ github.event.inputs.environment }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Initialize Terraform
+        run: terraform init
+
+      - name: Validate Terraform
+        run: terraform validate
+
+      - name: Terraform Plan Destroy
+        run: terraform plan -destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars
+
+      - name: Terraform Destroy Infrastructure
+        run: terraform destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve
+
+      - name: Verify Infrastructure Destruction
+        run: |
+          echo "🔍 Verifying infrastructure destruction..."
+          
+          # Check if Lambda function still exists
+          FUNCTION_NAME="hello-world-lambda-${{ github.event.inputs.environment }}-app"
+          if aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "⚠️ Lambda function $FUNCTION_NAME still exists"
+          else
+            echo "✅ Lambda function destroyed successfully"
+          fi
+          
+          # Check if API Gateway still exists
+          API_NAME="hello-world-lambda-${{ github.event.inputs.environment }}-api"
+          if aws apigatewayv2 get-apis --query "Items[?Name=='$API_NAME'].ApiId" --output text --region ${{ env.AWS_REGION }} | grep -v "None"; then
+            echo "⚠️ API Gateway $API_NAME still exists"
+          else
+            echo "✅ API Gateway destroyed successfully"
+          fi
+
+  cleanup-ecr:
+    name: 'Cleanup ECR - ${{ github.event.inputs.environment }}'
+    runs-on: ubuntu-latest
+    needs: destroy-infrastructure
+    if: github.event.inputs.cleanup_level == 'complete-cleanup'
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete ECR repository
+        env:
+          ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
+        run: |
+          echo "🗑️ Deleting ECR repository: $ECR_REPOSITORY"
+          
+          if aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "📋 Repository exists, proceeding with deletion..."
+            
+            # List images before deletion
+            echo "📋 Images in repository:"
+            aws ecr list-images --repository-name $ECR_REPOSITORY --region ${{ env.AWS_REGION }} || true
+            
+            # Delete repository with all images
+            aws ecr delete-repository \
+              --repository-name $ECR_REPOSITORY \
+              --force \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "✅ ECR repository $ECR_REPOSITORY deleted successfully"
+          else
+            echo "ℹ️ ECR repository $ECR_REPOSITORY does not exist or already deleted"
+          fi
+
+  cleanup-summary:
+    name: 'Cleanup Summary'
+    runs-on: ubuntu-latest
+    needs: [destroy-infrastructure, cleanup-ecr]
+    if: always()
+    
+    steps:
+      - name: Generate cleanup summary
+        run: |
+          echo "## 🧹 Cleanup Complete - ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Cleanup Results:" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.destroy-infrastructure.result }}" == "success" ]]; then
+            echo "- ✅ **Infrastructure destroyed successfully**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ❌ **Infrastructure destruction failed**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ github.event.inputs.cleanup_level }}" == "complete-cleanup" ]]; then
+            if [[ "${{ needs.cleanup-ecr.result }}" == "success" ]]; then
+              echo "- ✅ **ECR repository deleted successfully**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- ❌ **ECR repository deletion failed**" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "- ℹ️ **ECR repository preserved (infrastructure-only cleanup)**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "- Environment **${{ github.event.inputs.environment }}** has been cleaned up" >> $GITHUB_STEP_SUMMARY
+          echo "- To redeploy, run the workflows in this order:" >> $GITHUB_STEP_SUMMARY
+          echo "  1. Setup ECR Repository (if complete cleanup was performed)" >> $GITHUB_STEP_SUMMARY
+          echo "  2. Deploy Infrastructure" >> $GITHUB_STEP_SUMMARY
+          echo "  3. Build and Deploy Application" >> $GITHUB_STEP_SUMMARY

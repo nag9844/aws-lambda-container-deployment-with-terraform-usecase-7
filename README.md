@@ -38,54 +38,135 @@ The OIDC role should have permissions for:
 - CloudWatch (Log Groups, Dashboards, Alarms)
 - IAM (Roles, Policies)
 
-## 🚀 Quick Start
+## 🚀 Deployment Process
 
-### 1. Clone and Setup
+### Step 1: Setup ECR Repository
+
+Before deploying infrastructure, you need to create the ECR repository and push an initial image:
+
+1. Go to **Actions** → **Setup ECR Repository**
+2. Click **Run workflow**
+3. Select your environment (dev/staging/prod)
+4. Wait for completion
+
+This workflow will:
+- ✅ Create ECR repository if it doesn't exist
+- ✅ Setup lifecycle policies for image management
+- ✅ Build and push initial Docker image
+- ✅ Make the repository ready for Lambda deployment
+
+### Step 2: Deploy Infrastructure
+
+After ECR setup is complete:
+
+1. Go to **Actions** → **Deploy Infrastructure**
+2. Click **Run workflow**
+3. Select:
+   - **Action**: `apply`
+   - **Environment**: Same as Step 1
+4. Wait for completion
+
+This workflow will:
+- ✅ Validate Terraform configuration
+- ✅ Check ECR repository exists
+- ✅ Deploy all AWS infrastructure
+- ✅ Create Lambda function using ECR image
+
+### Step 3: Deploy Application Updates
+
+For subsequent application updates:
+
+1. **Automatic**: Push to `main` (prod) or `develop` (dev) branches
+2. **Manual**: Go to **Actions** → **Build and Deploy Application**
+
+This workflow will:
+- ✅ Test and build application
+- ✅ Build new Docker image
+- ✅ Push to ECR
+- ✅ Update Lambda function
+- ✅ Test deployment
+
+## 🧹 Cleanup and Destruction
+
+### Regular Cleanup
+
+For normal environment cleanup:
+
+1. Go to **Actions** → **Cleanup Environment**
+2. Click **Run workflow**
+3. Select:
+   - **Environment**: Environment to cleanup
+   - **Cleanup Level**: 
+     - `infrastructure-only`: Keeps ECR repository and images
+     - `complete-cleanup`: Deletes everything including ECR
+
+**Cleanup Levels:**
+
+| Level | Infrastructure | ECR Repository | Use Case |
+|-------|---------------|----------------|----------|
+| Infrastructure Only | ✅ Destroyed | ❌ Preserved | Temporary infrastructure removal |
+| Complete Cleanup | ✅ Destroyed | ✅ Deleted | Full environment removal |
+
+### Emergency Cleanup
+
+For stuck resources or emergency situations:
+
+1. Go to **Actions** → **Emergency Cleanup**
+2. Click **Run workflow**
+3. Type `EMERGENCY-CLEANUP` in the confirmation field
+4. Select environment
+
+**⚠️ Warning**: Emergency cleanup forcefully deletes resources and may leave some resources requiring manual cleanup.
+
+### Manual Cleanup Commands
+
+If workflows fail, you can manually clean up:
 
 ```bash
-git clone <repository-url>
-cd hello-world-lambda
-npm install
+# Delete Lambda function
+aws lambda delete-function --function-name hello-world-lambda-dev-app --region ap-south-1
+
+# Delete API Gateway (get API ID first)
+aws apigatewayv2 get-apis --query "Items[?Name=='hello-world-lambda-dev-api'].ApiId" --output text
+aws apigatewayv2 delete-api --api-id <API_ID>
+
+# Delete ECR repository
+aws ecr delete-repository --repository-name hello-world-lambda-dev-app --force --region ap-south-1
+
+# Delete CloudWatch log groups
+aws logs delete-log-group --log-group-name /aws/lambda/hello-world-lambda-dev-app
 ```
 
-### 2. Configure Terraform Backend
+## 🔄 GitHub Actions Workflows
 
-The project uses an existing S3 bucket for Terraform state:
-- **Bucket**: `usecases-terraform-state-bucket`
-- **Key**: `usecase2/statefile.tfstate`
-- **Region**: `ap-south-1`
+### Deployment Workflows
 
-### 3. Deploy Infrastructure
+1. **Setup ECR Repository** (`ecr-setup.yml`)
+   - **Trigger**: Manual workflow dispatch
+   - **Purpose**: Create ECR repository and push initial image
+   - **Run First**: Before any infrastructure deployment
 
-#### Using GitHub Actions (Recommended)
+2. **Deploy Infrastructure** (`infrastructure.yml`)
+   - **Trigger**: Manual workflow dispatch
+   - **Purpose**: Deploy/destroy AWS infrastructure with Terraform
+   - **Prerequisites**: ECR repository must exist
 
-1. Go to **Actions** tab in your GitHub repository
-2. Select **AWS infra** workflow
-3. Click **Run workflow**
-4. Choose:
-   - **Action**: `apply` or `destroy`
-   - **Environment**: `dev`, `staging`, or `prod`
+3. **Build and Deploy Application** (`build-and-deploy.yml`)
+   - **Trigger**: Push to main/develop, manual dispatch
+   - **Purpose**: Build and deploy application updates
+   - **Prerequisites**: Infrastructure must be deployed
 
-#### Using Local Scripts
+### Cleanup Workflows
 
-```bash
-# Deploy to dev environment
-./scripts/deploy-environment.sh dev apply
+4. **Cleanup Environment** (`cleanup-environment.yml`)
+   - **Trigger**: Manual workflow dispatch
+   - **Purpose**: Controlled cleanup with options
+   - **Options**: Infrastructure-only or complete cleanup
 
-# Plan changes for staging
-./scripts/deploy-environment.sh staging plan
-
-# Destroy prod environment
-./scripts/deploy-environment.sh prod destroy
-```
-
-### 4. Build and Deploy Application
-
-The CI/CD pipeline automatically:
-- Tests and builds the application
-- Creates Docker images
-- Pushes to ECR
-- Updates Lambda functions
+5. **Emergency Cleanup** (`emergency-cleanup.yml`)
+   - **Trigger**: Manual workflow dispatch with confirmation
+   - **Purpose**: Force delete stuck resources
+   - **Use**: When normal cleanup fails
 
 ## 🏗️ Infrastructure Components
 
@@ -117,20 +198,6 @@ terraform/
     ├── staging/
     └── prod/
 ```
-
-## 🔄 CI/CD Pipeline
-
-### Infrastructure Workflow (`terraform.yml`)
-- **Manual Trigger**: Workflow dispatch with environment and action selection
-- **Lint & Security**: TFLint validation and formatting checks
-- **OIDC Authentication**: Secure AWS access without long-lived credentials
-- **Multi-Environment**: Support for dev, staging, and prod
-
-### Application Workflow (`build-and-deploy.yml`)
-- **Automated Triggers**: Push to main/develop branches
-- **Testing**: Lint and build validation
-- **Container Build**: Docker image creation and ECR push
-- **Lambda Update**: Automatic function code updates
 
 ## 📊 Monitoring
 
@@ -198,6 +265,70 @@ terraform plan -var-file=environments/dev/terraform.tfvars
 terraform apply -var-file=environments/dev/terraform.tfvars
 ```
 
+## 🔧 Troubleshooting
+
+### Common Issues
+
+1. **ECR Repository Not Found**
+   ```
+   Error: Source image does not exist
+   ```
+   **Solution**: Run "Setup ECR Repository" workflow first
+
+2. **Lambda Function Not Found**
+   ```
+   Error: Lambda function does not exist
+   ```
+   **Solution**: Run "Deploy Infrastructure" workflow first
+
+3. **OIDC Authentication Issues**
+   - Verify OIDC provider configuration in AWS
+   - Check IAM role trust policy
+   - Ensure correct role ARN in workflows
+
+4. **Terraform State Issues**
+   - Verify S3 bucket access permissions
+   - Check state file path and region
+
+5. **Stuck Resources**
+   - Use "Emergency Cleanup" workflow
+   - Check AWS console for manual cleanup needs
+
+### Deployment Order
+
+Always follow this order:
+1. **Setup ECR Repository** (once per environment)
+2. **Deploy Infrastructure** (when infrastructure changes)
+3. **Build and Deploy Application** (for code updates)
+
+### Cleanup Order
+
+For complete environment removal:
+1. **Cleanup Environment** (complete-cleanup option)
+2. **Emergency Cleanup** (if regular cleanup fails)
+3. **Manual verification** in AWS console
+
+### Useful Commands
+
+```bash
+# Check Lambda logs
+aws logs tail /aws/lambda/hello-world-lambda-dev-app --follow --region ap-south-1
+
+# List ECR images
+aws ecr list-images --repository-name hello-world-lambda-dev-app --region ap-south-1
+
+# Test API Gateway
+curl -X GET https://your-api-gateway-url.amazonaws.com/
+
+# Check Lambda function
+aws lambda get-function --function-name hello-world-lambda-dev-app --region ap-south-1
+
+# List all resources for cleanup verification
+aws lambda list-functions --query "Functions[?contains(FunctionName, 'hello-world-lambda-dev')]"
+aws apigatewayv2 get-apis --query "Items[?contains(Name, 'hello-world-lambda-dev')]"
+aws ecr describe-repositories --query "repositories[?contains(repositoryName, 'hello-world-lambda-dev')]"
+```
+
 ## 📈 Monitoring & Alerts
 
 ### Key Metrics Monitored
@@ -211,34 +342,31 @@ terraform apply -var-file=environments/dev/terraform.tfvars
 - High latency (>10 seconds average)
 - Failed deployments
 
-## 🔧 Troubleshooting
+## 🔄 Complete Workflow Lifecycle
 
-### Common Issues
+### 🚀 Setup (First Time)
+```
+1. Setup ECR Repository → 2. Deploy Infrastructure → 3. Build and Deploy
+```
 
-1. **OIDC Authentication Issues**
-   - Verify OIDC provider configuration in AWS
-   - Check IAM role trust policy
-   - Ensure correct role ARN in workflows
+### 🔄 Development Cycle
+```
+Code Changes → Push to Branch → Auto Build and Deploy
+```
 
-2. **Terraform State Issues**
-   - Verify S3 bucket access permissions
-   - Check state file path and region
+### 🧹 Cleanup
+```
+Cleanup Environment (infrastructure-only) → Redeploy Infrastructure → Continue Development
+```
 
-3. **Lambda Container Issues**
-   - Verify Dockerfile Lambda compatibility
-   - Check ECR repository permissions
+### 🗑️ Complete Removal
+```
+Cleanup Environment (complete-cleanup) → Verify in AWS Console → Done
+```
 
-### Useful Commands
-
-```bash
-# Check Lambda logs
-aws logs tail /aws/lambda/hello-world-lambda-dev-app --follow --region ap-south-1
-
-# List ECR images
-aws ecr list-images --repository-name hello-world-lambda-dev-app --region ap-south-1
-
-# Test API Gateway
-curl -X GET https://your-api-gateway-url.amazonaws.com/
+### 🚨 Emergency
+```
+Emergency Cleanup → Manual Verification → Regular Cleanup (if needed)
 ```
 
 ## 📚 Additional Resources

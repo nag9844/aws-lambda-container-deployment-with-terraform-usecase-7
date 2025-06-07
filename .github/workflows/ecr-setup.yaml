@@ -1,0 +1,136 @@
+name: 'Setup ECR Repository'
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to setup ECR for'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  setup-ecr:
+    name: 'Setup ECR Repository - ${{ github.event.inputs.environment }}'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Create ECR repository if not exists
+      env:
+        ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
+      run: |
+        # Check if repository exists
+        if aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region ${{ env.AWS_REGION }} 2>/dev/null; then
+          echo "✅ ECR repository $ECR_REPOSITORY already exists"
+        else
+          echo "🏗️ Creating ECR repository $ECR_REPOSITORY"
+          aws ecr create-repository \
+            --repository-name $ECR_REPOSITORY \
+            --region ${{ env.AWS_REGION }} \
+            --image-scanning-configuration scanOnPush=true \
+            --image-tag-mutability MUTABLE
+          
+          echo "✅ ECR repository $ECR_REPOSITORY created successfully"
+        fi
+    
+    - name: Setup lifecycle policy
+      env:
+        ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
+      run: |
+        echo "📋 Setting up lifecycle policy for $ECR_REPOSITORY"
+        cat > lifecycle-policy.json << 'EOF'
+        {
+          "rules": [
+            {
+              "rulePriority": 1,
+              "description": "Keep last 10 tagged images",
+              "selection": {
+                "tagStatus": "tagged",
+                "countType": "imageCountMoreThan",
+                "countNumber": 10
+              },
+              "action": {
+                "type": "expire"
+              }
+            },
+            {
+              "rulePriority": 2,
+              "description": "Delete untagged images older than 1 day",
+              "selection": {
+                "tagStatus": "untagged",
+                "countType": "sinceImagePushed",
+                "countUnit": "days",
+                "countNumber": 1
+              },
+              "action": {
+                "type": "expire"
+              }
+            }
+          ]
+        }
+        EOF
+        
+        aws ecr put-lifecycle-policy \
+          --repository-name $ECR_REPOSITORY \
+          --lifecycle-policy-text file://lifecycle-policy.json \
+          --region ${{ env.AWS_REGION }}
+        
+        echo "✅ Lifecycle policy applied successfully"
+    
+    - name: Build and push initial image
+      env:
+        ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
+      run: |
+        # Login to ECR
+        aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+        
+        # Build initial image
+        echo "🏗️ Building initial Docker image"
+        docker build -t $ECR_REPOSITORY:initial .
+        
+        # Tag and push image
+        ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+        docker tag $ECR_REPOSITORY:initial $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker tag $ECR_REPOSITORY:initial $ECR_REGISTRY/$ECR_REPOSITORY:initial
+        
+        echo "📤 Pushing initial image to ECR"
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:initial
+        
+        echo "✅ Initial image pushed successfully"
+        echo "📋 Repository URI: $ECR_REGISTRY/$ECR_REPOSITORY"
+    
+    - name: Output repository details
+      env:
+        ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
+      run: |
+        ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+        
+        echo "## ECR Repository Setup Complete" >> $GITHUB_STEP_SUMMARY
+        echo "### Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository Name**: \`$ECR_REPOSITORY\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository URI**: \`$ECR_REGISTRY/$ECR_REPOSITORY\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Region**: \`${{ env.AWS_REGION }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Initial Image**: \`$ECR_REGISTRY/$ECR_REPOSITORY:latest\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Ready for infrastructure deployment!**" >> $GITHUB_STEP_SUMMARY

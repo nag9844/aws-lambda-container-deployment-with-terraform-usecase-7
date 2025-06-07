@@ -1,0 +1,118 @@
+name: 'Emergency Cleanup'
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment for emergency cleanup'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      confirmation:
+        description: 'Type "EMERGENCY-CLEANUP" to confirm'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  validate-confirmation:
+    name: 'Validate Emergency Cleanup Request'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Validate confirmation
+      run: |
+        if [[ "${{ github.event.inputs.confirmation }}" != "EMERGENCY-CLEANUP" ]]; then
+          echo "❌ Invalid confirmation. You must type exactly: EMERGENCY-CLEANUP"
+          exit 1
+        fi
+        echo "✅ Emergency cleanup confirmed"
+
+  emergency-cleanup:
+    name: 'Emergency Cleanup - ${{ github.event.inputs.environment }}'
+    runs-on: ubuntu-latest
+    needs: validate-confirmation
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Emergency resource cleanup
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: |
+          echo "🚨 Starting emergency cleanup for environment: $ENVIRONMENT"
+          
+          # Force delete Lambda function
+          FUNCTION_NAME="hello-world-lambda-$ENVIRONMENT-app"
+          echo "🗑️ Attempting to delete Lambda function: $FUNCTION_NAME"
+          aws lambda delete-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Lambda function not found or already deleted"
+          
+          # Force delete API Gateway
+          echo "🗑️ Attempting to delete API Gateways..."
+          API_IDS=$(aws apigatewayv2 get-apis --query "Items[?contains(Name, 'hello-world-lambda-$ENVIRONMENT')].ApiId" --output text --region ${{ env.AWS_REGION }})
+          for API_ID in $API_IDS; do
+            if [[ "$API_ID" != "None" && -n "$API_ID" ]]; then
+              echo "Deleting API Gateway: $API_ID"
+              aws apigatewayv2 delete-api --api-id $API_ID --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Failed to delete API $API_ID"
+            fi
+          done
+          
+          # Force delete ECR repository
+          ECR_REPOSITORY="hello-world-lambda-$ENVIRONMENT-app"
+          echo "🗑️ Attempting to delete ECR repository: $ECR_REPOSITORY"
+          aws ecr delete-repository --repository-name $ECR_REPOSITORY --force --region ${{ env.AWS_REGION }} 2>/dev/null || echo "ECR repository not found or already deleted"
+          
+          # Delete CloudWatch log groups
+          echo "🗑️ Attempting to delete CloudWatch log groups..."
+          LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/hello-world-lambda-$ENVIRONMENT" --query "logGroups[].logGroupName" --output text --region ${{ env.AWS_REGION }})
+          for LOG_GROUP in $LOG_GROUPS; do
+            if [[ -n "$LOG_GROUP" ]]; then
+              echo "Deleting log group: $LOG_GROUP"
+              aws logs delete-log-group --log-group-name "$LOG_GROUP" --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Failed to delete log group $LOG_GROUP"
+            fi
+          done
+          
+          # Delete API Gateway log groups
+          API_LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/aws/apigateway/hello-world-lambda-$ENVIRONMENT" --query "logGroups[].logGroupName" --output text --region ${{ env.AWS_REGION }})
+          for LOG_GROUP in $API_LOG_GROUPS; do
+            if [[ -n "$LOG_GROUP" ]]; then
+              echo "Deleting API Gateway log group: $LOG_GROUP"
+              aws logs delete-log-group --log-group-name "$LOG_GROUP" --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Failed to delete log group $LOG_GROUP"
+            fi
+          done
+          
+          echo "🚨 Emergency cleanup completed"
+          echo "⚠️ Note: VPC, subnets, and IAM roles may still exist and require manual cleanup"
+
+      - name: Emergency cleanup summary
+        run: |
+          echo "## 🚨 Emergency Cleanup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Resources forcefully deleted:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Lambda functions" >> $GITHUB_STEP_SUMMARY
+          echo "- API Gateways" >> $GITHUB_STEP_SUMMARY
+          echo "- ECR repositories" >> $GITHUB_STEP_SUMMARY
+          echo "- CloudWatch log groups" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**⚠️ Manual cleanup may be required for:**" >> $GITHUB_STEP_SUMMARY
+          echo "- VPC and networking resources" >> $GITHUB_STEP_SUMMARY
+          echo "- IAM roles and policies" >> $GITHUB_STEP_SUMMARY
+          echo "- CloudWatch dashboards and alarms" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Recommendation:** Run the regular 'Cleanup Environment' workflow after this emergency cleanup to ensure complete removal."
