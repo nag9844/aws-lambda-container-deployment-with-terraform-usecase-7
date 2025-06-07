@@ -66,13 +66,17 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
-# Lambda Function
+# Create a simple placeholder Lambda function first
 resource "aws_lambda_function" "main" {
   function_name = "${var.project_name}-${var.environment}-hello-world"
   role          = aws_iam_role.lambda_role.arn
   
-  package_type  = "Image"
-  image_uri     = "${var.ecr_repository_uri}:latest"
+  # Use a simple inline code for initial deployment
+  filename         = "${path.module}/placeholder.zip"
+  source_code_hash = data.archive_file.placeholder.output_base64sha256
+  
+  runtime = "python3.11"
+  handler = "lambda_function.lambda_handler"
   
   timeout     = 30
   memory_size = 256
@@ -100,5 +104,43 @@ resource "aws_lambda_function" "main" {
 
   tags = {
     Name = "${var.project_name}-${var.environment}-lambda"
+  }
+
+  lifecycle {
+    ignore_changes = [
+      # Ignore changes to these attributes after initial creation
+      # They will be updated by the CI/CD pipeline
+      filename,
+      source_code_hash,
+      image_uri,
+      package_type
+    ]
+  }
+}
+
+# Create a placeholder zip file for initial deployment
+data "archive_file" "placeholder" {
+  type        = "zip"
+  output_path = "${path.module}/placeholder.zip"
+  
+  source {
+    content = <<EOF
+import json
+
+def lambda_handler(event, context):
+    return {
+        'statusCode': 200,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        },
+        'body': json.dumps({
+            'message': 'Placeholder Lambda - Container image will be deployed via CI/CD',
+            'environment': '${var.environment}',
+            'project': '${var.project_name}'
+        })
+    }
+EOF
+    filename = "lambda_function.py"
   }
 }

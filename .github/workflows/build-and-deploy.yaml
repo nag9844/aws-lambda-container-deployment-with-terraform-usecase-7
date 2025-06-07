@@ -20,11 +20,6 @@ on:
           - staging
           - prod
 
-permissions:
-  id-token: write
-  contents: read          
-  pull-requests: write
-
 env:
   AWS_REGION: 'ap-south-1'
 
@@ -95,13 +90,16 @@ jobs:
         environment: [dev, staging, prod]
     
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Update Lambda function
+      - name: Update Lambda function to container image
         run: |
           FUNCTION_NAME="hello-world-lambda-${{ matrix.environment }}-hello-world"
           IMAGE_URI="${{ secrets.ECR_REPOSITORY_URI }}:latest"
@@ -109,12 +107,28 @@ jobs:
           echo "Updating Lambda function: $FUNCTION_NAME"
           echo "With image: $IMAGE_URI"
           
+          # First, update the function configuration to use container images
+          echo "Updating function configuration to use container images..."
+          aws lambda update-function-configuration \
+            --function-name $FUNCTION_NAME \
+            --package-type Image \
+            --region ${{ env.AWS_REGION }} || echo "Function may already be configured for containers"
+          
+          # Wait for configuration update
+          echo "Waiting for configuration update..."
+          aws lambda wait function-updated \
+            --function-name $FUNCTION_NAME \
+            --region ${{ env.AWS_REGION }}
+          
+          # Update function code with container image
+          echo "Updating function code with container image..."
           aws lambda update-function-code \
             --function-name $FUNCTION_NAME \
             --image-uri $IMAGE_URI \
             --region ${{ env.AWS_REGION }}
           
-          # Wait for update to complete
+          # Wait for code update to complete
+          echo "Waiting for code update to complete..."
           aws lambda wait function-updated \
             --function-name $FUNCTION_NAME \
             --region ${{ env.AWS_REGION }}
