@@ -39,8 +39,8 @@ jobs:
 
     - name: Set up Terraform
       uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.6.6
+      # with:
+      #   terraform_version: 1.6.6
     
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -53,7 +53,7 @@ jobs:
         # Create a temporary ECR-only configuration
         cat > ecr-only.tf << 'EOF'
         terraform {
-          required_version = ">= 1.0"
+          required_version = ">= 1.12.0"
           required_providers {
             aws = {
               source  = "hashicorp/aws"
@@ -63,7 +63,7 @@ jobs:
           
           backend "s3" {
             bucket       = "usecases-terraform-state-bucket"
-            key          = "usecase2/ecr-only-statefile.tfstate"
+            key          = "usecase7/ecr-only-statefile.tfstate"
             region       = "ap-south-1"
             encrypt      = true
             use_lockfile = true
