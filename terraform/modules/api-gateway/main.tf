@@ -155,6 +155,9 @@ resource "aws_api_gateway_integration_response" "root_options" {
   depends_on = [aws_api_gateway_integration.root_options]
 }
 
+# Data source for current region
+data "aws_region" "current" {}
+
 resource "aws_api_gateway_deployment" "main" {
   depends_on = [
     aws_api_gateway_integration.lambda_proxy,
@@ -164,7 +167,6 @@ resource "aws_api_gateway_deployment" "main" {
   ]
 
   rest_api_id = aws_api_gateway_rest_api.main.id
-  stage_name  = var.environment
 
   triggers = {
     redeployment = sha1(jsonencode([

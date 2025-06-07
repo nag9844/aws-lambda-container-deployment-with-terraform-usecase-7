@@ -1,6 +1,6 @@
 output "api_gateway_url" {
   description = "API Gateway URL"
-  value       = "${aws_api_gateway_deployment.main.invoke_url}/"
+  value       = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${aws_api_gateway_stage.main.stage_name}/"
 }
 
 output "rest_api_id" {
@@ -25,5 +25,5 @@ output "execution_arn" {
 
 output "api_gateway_domain_name" {
   description = "API Gateway domain name"
-  value       = "${aws_api_gateway_rest_api.main.id}.execute-api.ap-south-1.amazonaws.com"
+  value       = "${aws_api_gateway_rest_api.main.id}.execute-api.${data.aws_region.current.name}.amazonaws.com"
 }
