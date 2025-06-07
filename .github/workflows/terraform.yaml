@@ -34,6 +34,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        # with:
+        #   terraform_version: 1.6.6
+
       - name: Install TFLint
         run: |
           wget https://github.com/terraform-linters/tflint/releases/download/v0.50.2/tflint_linux_amd64.zip
@@ -41,16 +46,15 @@ jobs:
           sudo mv tflint /usr/local/bin/
           tflint --version
 
+      - name: Check Terraform formatting
+        run: |
+          cd terraform
+          terraform fmt  -recursive
+
       - name: Run TFLint
         run: |
           cd terraform
           tflint --init && tflint -f compact
-
-      - name: Check Terraform formatting
-        run: |
-          cd terraform
-          terraform fmt -recursive
-        continue-on-error: true
 
   terraform:
     name: Terraform ${{ github.event.inputs.action }} - ${{ github.event.inputs.environment }}
