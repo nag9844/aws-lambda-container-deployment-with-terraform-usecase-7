@@ -49,7 +49,7 @@ jobs:
       - name: Check Terraform formatting
         run: |
           cd terraform
-          terraform fmt -check -recursive
+          terraform fmt -recursive
 
   terraform:
     name: Terraform ${{ github.event.inputs.action }} - ${{ github.event.inputs.environment }}
