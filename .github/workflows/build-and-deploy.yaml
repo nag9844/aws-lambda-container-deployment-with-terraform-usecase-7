@@ -137,8 +137,8 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=${{ github.ref_name }}-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -300,25 +300,25 @@ jobs:
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL" || echo "000")
             
             if [ "$HTTP_STATUS" -eq 200 ]; then
-              echo "API Gateway test passed! (Status: $HTTP_STATUS)"
+              echo "✅ API Gateway test passed! (Status: $HTTP_STATUS)"
             else
-              echo "API Gateway test returned status: $HTTP_STATUS"
+              echo "⚠️ API Gateway test returned status: $HTTP_STATUS"
               # Don't fail the build for API Gateway issues as they might be infrastructure-related
             fi
           else
-            echo " API Gateway not found for environment: ${{ matrix.environment}"
-            echo " Deploy infrastructure first using Terraform."
+            echo "⚠️ API Gateway not found for environment: ${{ matrix.environment }}"
+            echo "💡 Deploy infrastructure first using Terraform."
           fi
 
       - name: Output deployment summary
         run: |
           echo ""
-          echo "Deployment Summary for ${{ matrix.environment }}:"
-          echo "Docker image built and pushed"
-          echo "Lambda function updated (if exists)"
-          echo "Tests completed"
+          echo "📊 Deployment Summary for ${{ matrix.environment }}:"
+          echo "✅ Docker image built and pushed"
+          echo "✅ Lambda function updated (if exists)"
+          echo "✅ Tests completed"
           echo ""
-          echo "Useful links:"
+          echo "🔗 Useful links:"
           echo "- ECR Repository: https://console.aws.amazon.com/ecr/repositories/hello-world-lambda-hello-world?region=${{ env.AWS_REGION }}"
           echo "- Lambda Function: https://console.aws.amazon.com/lambda/home?region=${{ env.AWS_REGION }}#/functions/hello-world-lambda-${{ matrix.environment }}-hello-world"
           echo "- CloudWatch Logs: https://console.aws.amazon.com/cloudwatch/home?region=${{ env.AWS_REGION }}#logsV2:log-groups/log-group/%2Faws%2Flambda%2Fhello-world-lambda-${{ matrix.environment }}-hello-world"
