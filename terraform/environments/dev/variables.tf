@@ -1,11 +1,13 @@
 variable "project_name" {
   description = "Name of the project"
   type        = string
+  default     = "hello-world-lambda"
 }
 
-variable "environment" {
-  description = "Environment name"
+variable "aws_region" {
+  description = "AWS region"
   type        = string
+  default     = "ap-south-1"
 }
 
 variable "vpc_cidr" {
@@ -20,10 +22,10 @@ variable "az_count" {
   default     = 2
 }
 
-variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets (optional, will be calculated if not provided)"
-  type        = list(string)
-  default     = []
+variable "lambda_image_uri" {
+  description = "URI of the Lambda container image"
+  type        = string
+  default     = ""
 }
 
 variable "private_subnet_cidrs" {
@@ -31,21 +33,21 @@ variable "private_subnet_cidrs" {
   type        = list(string)
   default     = []
 }
-
-variable "availability_zones" {
-  description = "List of availability zones (optional, will use available AZs if not provided)"
+variable "public_subnet_cidrs" {
+  description = "CIDR blocks for public subnets (optional, will be calculated if not provided)"
   type        = list(string)
   default     = []
 }
 
-variable "enable_nat_gateway" {
-  description = "Enable NAT Gateway for private subnets"
+variable "enable_vpc_config" {
+  description = "Enable VPC configuration for Lambda"
   type        = bool
-  default     = false
+  default     = true
 }
 
-variable "enable_flow_logs" {
-  description = "Enable VPC Flow Logs"
-  type        = bool
-  default     = false
+variable "environment" {
+  description = "Environment name"
+  type        = string
+  default     = ""
+  
 }

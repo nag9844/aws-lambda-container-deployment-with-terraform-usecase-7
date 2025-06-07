@@ -1,138 +1,141 @@
-data "aws_caller_identity" "current" {}
+# Lambda Module - Create Lambda function with container image
 
-# Lambda execution role
+# Lambda function
+resource "aws_lambda_function" "main" {
+  function_name = "${var.project_name}-${var.environment}"
+  role          = aws_iam_role.lambda_execution.arn
+  package_type  = "Image"
+  image_uri     = var.image_uri
+  timeout       = var.timeout
+  memory_size   = var.memory_size
+
+  dynamic "vpc_config" {
+    for_each = var.vpc_config != null ? [var.vpc_config] : []
+    content {
+      subnet_ids         = vpc_config.value.subnet_ids
+      security_group_ids = vpc_config.value.security_group_ids
+    }
+  }
+
+  dynamic "environment" {
+    for_each = length(var.environment_variables) > 0 ? [var.environment_variables] : []
+    content {
+      variables = environment.value
+    }
+  }
+
+  dynamic "dead_letter_config" {
+    for_each = var.dead_letter_target_arn != null ? [1] : []
+    content {
+      target_arn = var.dead_letter_target_arn
+    }
+  }
+
+  tags = {
+    Name        = "${var.project_name}-lambda-${var.environment}"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.lambda_basic_execution,
+    aws_iam_role_policy_attachment.lambda_vpc_access,
+    aws_cloudwatch_log_group.lambda
+  ]
+}
+
+# CloudWatch Log Group
+resource "aws_cloudwatch_log_group" "lambda" {
+  name              = "/aws/lambda/${var.project_name}-${var.environment}"
+  retention_in_days = var.log_retention_days
+
+  tags = {
+    Name        = "${var.project_name}-lambda-logs-${var.environment}"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+# IAM role for Lambda execution
 resource "aws_iam_role" "lambda_execution" {
-  name = "${var.project_name}-${var.environment}-lambda-execution-role"
+  name = "${var.project_name}-lambda-execution-role-${var.environment}"
 
   assume_role_policy = jsonencode({
-    Version = "2012-10-17",
+    Version = "2012-10-17"
     Statement = [
       {
-        Action = "sts:AssumeRole",
-        Effect = "Allow",
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
         Principal = {
           Service = "lambda.amazonaws.com"
         }
       }
     ]
   })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_execution_basic" {
-  role       = aws_iam_role.lambda_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_execution_vpc" {
-  role       = aws_iam_role.lambda_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_xray" {
-  role       = aws_iam_role.lambda_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
-}
-
-# Security group for Lambda
-resource "aws_security_group" "lambda" {
-  name_prefix = "${var.project_name}-${var.environment}-lambda-"
-  vpc_id      = var.vpc_id
-  description = "Security group for Lambda function ${var.project_name}-${var.environment}"
-
-  ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = [var.vpc_cidr]
-    description = "Allow all traffic from VPC"
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Allow all outbound traffic"
-  }
 
   tags = {
-    Name = "${var.project_name}-${var.environment}-lambda-sg"
-  }
-
-  lifecycle {
-    create_before_destroy = true
+    Name        = "${var.project_name}-lambda-role-${var.environment}"
+    Environment = var.environment
+    Project     = var.project_name
   }
 }
 
-# Create a placeholder image in ECR if it doesn't exist
-resource "null_resource" "push_placeholder_image" {
-  triggers = {
-    ecr_repository_url = var.ecr_repository_url
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      set -e
-      REPO_NAME=$(echo "${var.ecr_repository_url}" | cut -d'/' -f2)
-      REGISTRY_URL=$(echo "${var.ecr_repository_url}" | cut -d'/' -f1)
-
-      echo "Checking if image exists in ECR..."
-      if ! aws ecr describe-images \
-          --repository-name "$REPO_NAME" \
-          --image-ids imageTag=latest \
-          --region ap-south-1 >/dev/null 2>&1; then
-
-        echo 'Image not found. Building and pushing placeholder...'
-
-        cat <<EOF > /tmp/Dockerfile.placeholder
-              FROM public.ecr.aws/lambda/nodejs:18
-              CMD ["index.handler"]
-              EOF
-
-        docker build -f /tmp/Dockerfile.placeholder -t "${var.ecr_repository_url}:latest" /tmp
-
-        aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin "$REGISTRY_URL"
-
-        docker push "${var.ecr_repository_url}:latest"
-      else
-        echo "Image already exists in ECR. Skipping push."
-      fi
-    EOT
-    interpreter = ["/bin/bash", "-c"]
-  }
+# IAM policy attachment for basic Lambda execution
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  role       = aws_iam_role.lambda_execution.name
 }
 
-# Lambda function using image from ECR
-resource "aws_lambda_function" "main" {
-  function_name = "${var.project_name}-${var.environment}"
-  role          = aws_iam_role.lambda_execution.arn
-  package_type  = "Image"
-  image_uri     = "${var.ecr_repository_url}:latest"
-  timeout       = 30
-  memory_size   = 512
+# IAM policy attachment for VPC access (if VPC config is provided)
+resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
+  count      = var.vpc_config != null ? 1 : 0
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+  role       = aws_iam_role.lambda_execution.name
+}
 
-  vpc_config {
-    subnet_ids         = var.private_subnet_ids
-    security_group_ids = [aws_security_group.lambda.id]
-  }
+# Custom IAM policy for additional permissions
+resource "aws_iam_role_policy" "lambda_custom" {
+  count = var.custom_policy != null ? 1 : 0
+  name  = "${var.project_name}-lambda-custom-policy-${var.environment}"
+  role  = aws_iam_role.lambda_execution.id
 
-  tracing_config {
-    mode = "Active"
-  }
+  policy = var.custom_policy
+}
 
-  environment {
-    variables = {
-      ENVIRONMENT = var.environment
+# Lambda function URL (if enabled)
+resource "aws_lambda_function_url" "main" {
+  count              = var.enable_function_url ? 1 : 0
+  function_name      = aws_lambda_function.main.function_name
+  authorization_type = var.function_url_auth_type
+
+  dynamic "cors" {
+    for_each = var.function_url_cors != null ? [var.function_url_cors] : []
+    content {
+      allow_credentials = cors.value.allow_credentials
+      allow_headers     = cors.value.allow_headers
+      allow_methods     = cors.value.allow_methods
+      allow_origins     = cors.value.allow_origins
+      expose_headers    = cors.value.expose_headers
+      max_age          = cors.value.max_age
     }
   }
+}
 
-  lifecycle {
-    ignore_changes = [image_uri]
-  }
+# Lambda permission for API Gateway (if api_gateway_arn is provided)
+resource "aws_lambda_permission" "api_gateway" {
+  count         = var.api_gateway_arn != null ? 1 : 0
+  statement_id  = "AllowExecutionFromAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.main.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_gateway_arn}/*/*"
+}
 
-  depends_on = [
-    aws_iam_role_policy_attachment.lambda_execution_basic,
-    aws_iam_role_policy_attachment.lambda_execution_vpc,
-    null_resource.push_placeholder_image
-  ]
+# Lambda alias for versioning
+resource "aws_lambda_alias" "main" {
+  count            = var.create_alias ? 1 : 0
+  name             = var.alias_name
+  description      = "Alias for ${var.project_name} Lambda function"
+  function_name    = aws_lambda_function.main.function_name
+  function_version = var.function_version
 }

@@ -1,169 +1,85 @@
+# API Gateway Module - Create REST API with Lambda integration
+
+# API Gateway REST API
 resource "aws_api_gateway_rest_api" "main" {
-  name        = "${var.project_name}-${var.environment}-api"
+  name        = "${var.project_name}-api-${var.environment}"
   description = "API Gateway for ${var.project_name} ${var.environment}"
 
   endpoint_configuration {
-    types = ["REGIONAL"]
+    types = [var.endpoint_type]
   }
 
   tags = {
-    Name        = "${var.project_name}-${var.environment}-api"
+    Name        = "${var.project_name}-api-${var.environment}"
     Environment = var.environment
     Project     = var.project_name
   }
 }
 
+# API Gateway Resource (proxy resource to catch all paths)
 resource "aws_api_gateway_resource" "proxy" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_rest_api.main.root_resource_id
   path_part   = "{proxy+}"
 }
 
-resource "aws_api_gateway_method" "proxy_any" {
+# API Gateway Method for proxy resource
+resource "aws_api_gateway_method" "proxy" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.proxy.id
   http_method   = "ANY"
-  authorization = "NONE"
+  authorization = var.authorization_type
+
+  dynamic "authorizer_id" {
+    for_each = var.authorizer_id != null ? [var.authorizer_id] : []
+    content {
+      authorizer_id = authorizer_id.value
+    }
+  }
 }
 
-resource "aws_api_gateway_method" "root_any" {
+# API Gateway Method for root resource
+resource "aws_api_gateway_method" "root" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_rest_api.main.root_resource_id
   http_method   = "ANY"
-  authorization = "NONE"
+  authorization = var.authorization_type
+
+  dynamic "authorizer_id" {
+    for_each = var.authorizer_id != null ? [var.authorizer_id] : []
+    content {
+      authorizer_id = authorizer_id.value
+    }
+  }
 }
 
-# Enable CORS for the proxy resource
-resource "aws_api_gateway_method" "proxy_options" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.proxy.id
-  http_method   = "OPTIONS"
-  authorization = "NONE"
-}
-
-# Enable CORS for the root resource
-resource "aws_api_gateway_method" "root_options" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_rest_api.main.root_resource_id
-  http_method   = "OPTIONS"
-  authorization = "NONE"
-}
-
-resource "aws_api_gateway_integration" "lambda_proxy" {
+# API Gateway Integration for proxy resource
+resource "aws_api_gateway_integration" "proxy" {
   rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.proxy.id
-  http_method = aws_api_gateway_method.proxy_any.http_method
+  resource_id = aws_api_gateway_method.proxy.resource_id
+  http_method = aws_api_gateway_method.proxy.http_method
 
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = var.lambda_invoke_arn
 }
 
-resource "aws_api_gateway_integration" "lambda_root" {
+# API Gateway Integration for root resource
+resource "aws_api_gateway_integration" "root" {
   rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_rest_api.main.root_resource_id
-  http_method = aws_api_gateway_method.root_any.http_method
+  resource_id = aws_api_gateway_method.root.resource_id
+  http_method = aws_api_gateway_method.root.http_method
 
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = var.lambda_invoke_arn
 }
 
-# CORS integration for proxy
-resource "aws_api_gateway_integration" "proxy_options" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.proxy.id
-  http_method = aws_api_gateway_method.proxy_options.http_method
-
-  type = "MOCK"
-  request_templates = {
-    "application/json" = jsonencode({
-      statusCode = 200
-    })
-  }
-}
-
-# CORS integration for root
-resource "aws_api_gateway_integration" "root_options" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_rest_api.main.root_resource_id
-  http_method = aws_api_gateway_method.root_options.http_method
-
-  type = "MOCK"
-  request_templates = {
-    "application/json" = jsonencode({
-      statusCode = 200
-    })
-  }
-}
-
-# CORS method responses
-resource "aws_api_gateway_method_response" "proxy_options" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.proxy.id
-  http_method = aws_api_gateway_method.proxy_options.http_method
-  status_code = "200"
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = true
-    "method.response.header.Access-Control-Allow-Methods" = true
-    "method.response.header.Access-Control-Allow-Origin"  = true
-  }
-}
-
-resource "aws_api_gateway_method_response" "root_options" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_rest_api.main.root_resource_id
-  http_method = aws_api_gateway_method.root_options.http_method
-  status_code = "200"
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = true
-    "method.response.header.Access-Control-Allow-Methods" = true
-    "method.response.header.Access-Control-Allow-Origin"  = true
-  }
-}
-
-# CORS integration responses
-resource "aws_api_gateway_integration_response" "proxy_options" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.proxy.id
-  http_method = aws_api_gateway_method.proxy_options.http_method
-  status_code = aws_api_gateway_method_response.proxy_options.status_code
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-    "method.response.header.Access-Control-Allow-Methods" = "'GET,OPTIONS,POST,PUT,DELETE'"
-    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
-  }
-
-  depends_on = [aws_api_gateway_integration.proxy_options]
-}
-
-resource "aws_api_gateway_integration_response" "root_options" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_rest_api.main.root_resource_id
-  http_method = aws_api_gateway_method.root_options.http_method
-  status_code = aws_api_gateway_method_response.root_options.status_code
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-    "method.response.header.Access-Control-Allow-Methods" = "'GET,OPTIONS,POST,PUT,DELETE'"
-    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
-  }
-
-  depends_on = [aws_api_gateway_integration.root_options]
-}
-
-# Data source for current region
-data "aws_region" "current" {}
-
+# API Gateway Deployment
 resource "aws_api_gateway_deployment" "main" {
   depends_on = [
-    aws_api_gateway_integration.lambda_proxy,
-    aws_api_gateway_integration.lambda_root,
-    aws_api_gateway_integration.proxy_options,
-    aws_api_gateway_integration.root_options,
+    aws_api_gateway_integration.proxy,
+    aws_api_gateway_integration.root,
   ]
 
   rest_api_id = aws_api_gateway_rest_api.main.id
@@ -171,14 +87,10 @@ resource "aws_api_gateway_deployment" "main" {
   triggers = {
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.proxy.id,
-      aws_api_gateway_method.proxy_any.id,
-      aws_api_gateway_method.root_any.id,
-      aws_api_gateway_method.proxy_options.id,
-      aws_api_gateway_method.root_options.id,
-      aws_api_gateway_integration.lambda_proxy.id,
-      aws_api_gateway_integration.lambda_root.id,
-      aws_api_gateway_integration.proxy_options.id,
-      aws_api_gateway_integration.root_options.id,
+      aws_api_gateway_method.proxy.id,
+      aws_api_gateway_integration.proxy.id,
+      aws_api_gateway_method.root.id,
+      aws_api_gateway_integration.root.id,
     ]))
   }
 
@@ -187,55 +99,95 @@ resource "aws_api_gateway_deployment" "main" {
   }
 }
 
-resource "aws_lambda_permission" "api_gateway" {
-  statement_id  = "AllowExecutionFromAPIGateway"
-  action        = "lambda:InvokeFunction"
-  function_name = var.lambda_function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.main.execution_arn}/*/*"
-}
-
-# CloudWatch Log Group for API Gateway
-resource "aws_cloudwatch_log_group" "api_gateway" {
-  name              = "API-Gateway-Execution-Logs_${aws_api_gateway_rest_api.main.id}/${var.environment}"
-  retention_in_days = 14
-
-  tags = {
-    Name        = "${var.project_name}-${var.environment}-api-gateway-logs"
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-# API Gateway Stage with logging
+# API Gateway Stage
 resource "aws_api_gateway_stage" "main" {
   deployment_id = aws_api_gateway_deployment.main.id
   rest_api_id   = aws_api_gateway_rest_api.main.id
-  stage_name    = var.environment
+  stage_name    = var.stage_name
 
-  access_log_settings {
-    destination_arn = aws_cloudwatch_log_group.api_gateway.arn
-    format = jsonencode({
-      requestId      = "$context.requestId"
-      ip             = "$context.identity.sourceIp"
-      caller         = "$context.identity.caller"
-      user           = "$context.identity.user"
-      requestTime    = "$context.requestTime"
-      httpMethod     = "$context.httpMethod"
-      resourcePath   = "$context.resourcePath"
-      status         = "$context.status"
-      protocol       = "$context.protocol"
-      responseLength = "$context.responseLength"
-    })
+  dynamic "access_log_settings" {
+    for_each = var.enable_access_logs ? [1] : []
+    content {
+      destination_arn = aws_cloudwatch_log_group.api_gateway[0].arn
+      format = jsonencode({
+        requestId      = "$requestId"
+        ip             = "$sourceIp"
+        caller         = "$caller"
+        user           = "$user"
+        requestTime    = "$requestTime"
+        httpMethod     = "$httpMethod"
+        resourcePath   = "$resourcePath"
+        status         = "$status"
+        protocol       = "$protocol"
+        responseLength = "$responseLength"
+      })
+    }
   }
 
-  xray_tracing_enabled = true
+  dynamic "canary_settings" {
+    for_each = var.canary_settings != null ? [var.canary_settings] : []
+    content {
+      percent_traffic          = canary_settings.value.percent_traffic
+      deployment_id           = canary_settings.value.deployment_id
+      stage_variable_overrides = canary_settings.value.stage_variable_overrides
+      use_stage_cache         = canary_settings.value.use_stage_cache
+    }
+  }
 
   tags = {
-    Name        = "${var.project_name}-${var.environment}-api-stage"
+    Name        = "${var.project_name}-api-stage-${var.environment}"
     Environment = var.environment
     Project     = var.project_name
   }
+}
 
-  depends_on = [aws_cloudwatch_log_group.api_gateway]
+# CloudWatch Log Group for API Gateway access logs
+resource "aws_cloudwatch_log_group" "api_gateway" {
+  count             = var.enable_access_logs ? 1 : 0
+  name              = "/aws/apigateway/${var.project_name}-${var.environment}"
+  retention_in_days = var.log_retention_days
+
+  tags = {
+    Name        = "${var.project_name}-api-logs-${var.environment}"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+# API Gateway Method Settings
+resource "aws_api_gateway_method_settings" "main" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  stage_name  = aws_api_gateway_stage.main.stage_name
+  method_path = "*/*"
+
+  settings {
+    metrics_enabled = var.enable_metrics
+    logging_level   = var.logging_level
+  }
+}
+
+# Custom Domain Name (optional)
+resource "aws_api_gateway_domain_name" "main" {
+  count           = var.custom_domain_name != null ? 1 : 0
+  domain_name     = var.custom_domain_name
+  certificate_arn = var.certificate_arn
+
+  endpoint_configuration {
+    types = [var.endpoint_type]
+  }
+
+  tags = {
+    Name        = "${var.project_name}-api-domain-${var.environment}"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+# Base Path Mapping for custom domain
+resource "aws_api_gateway_base_path_mapping" "main" {
+  count       = var.custom_domain_name != null ? 1 : 0
+  api_id      = aws_api_gateway_rest_api.main.id
+  stage_name  = aws_api_gateway_stage.main.stage_name
+  domain_name = aws_api_gateway_domain_name.main[0].domain_name
+  base_path   = var.base_path
 }
