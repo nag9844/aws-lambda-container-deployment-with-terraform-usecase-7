@@ -49,25 +49,4 @@ resource "aws_ecr_lifecycle_policy" "main" {
   })
 }
 
-# Force delete ECR repository on destroy (for testing environments)
-resource "null_resource" "ecr_cleanup" {
-  count = var.environment != "prod" ? 1 : 0
-  
-  triggers = {
-    repository_name = aws_ecr_repository.main.name
-  }
-  
-  provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
-      aws ecr delete-repository \
-        --repository-name ${self.triggers.repository_name} \
-        --force \
-        --region ${data.aws_region.current.name} || true
-    EOT
-  }
-  
-  depends_on = [aws_ecr_repository.main]
-}
-
 data "aws_region" "current" {}
