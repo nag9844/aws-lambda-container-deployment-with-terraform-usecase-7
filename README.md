@@ -97,18 +97,32 @@ ECR_REPOSITORY_URI       # ECR repository URI (after first deployment)
 
 ### 1. Set Up Terraform Backend
 
-First, create the S3 bucket for Terraform state using the GitHub Actions workflow:
+You have two options for setting up the S3 backend:
+
+#### Option A: Use Existing S3 Bucket
+
+1. Go to your repository's **Actions** tab
+2. Select **Setup Terraform Backend** workflow
+3. Click **Run workflow** and choose:
+   - **Action**: `use-existing`
+   - **Existing bucket**: `your-existing-bucket-name`
+4. Copy the output `TF_STATE_BUCKET` value to your GitHub secrets
+
+#### Option B: Create New S3 Bucket
 
 1. Go to your repository's **Actions** tab
 2. Select **Setup Terraform Backend** workflow
 3. Click **Run workflow** and choose **create**
 4. Copy the output `TF_STATE_BUCKET` value to your GitHub secrets
 
-Alternatively, run the script locally:
+#### Option C: Use Script Locally
 
 ```bash
-chmod +x scripts/setup-terraform-backend.sh
-./scripts/setup-terraform-backend.sh
+# Create new bucket
+./scripts/setup-terraform-backend.sh create
+
+# Or use existing bucket
+./scripts/setup-terraform-backend.sh use-existing your-existing-bucket-name
 ```
 
 ### 2. Initial Infrastructure Deployment
@@ -137,7 +151,8 @@ export AWS_REGION="ap-south-1"
 ### Backend Setup Workflow
 - **Trigger**: Manual workflow dispatch
 - **Actions**:
-  - Create S3 bucket with versioning and encryption
+  - Create new S3 bucket OR configure existing bucket
+  - Enable versioning and encryption
   - Configure bucket for Terraform state storage
   - Output bucket name for GitHub secrets
 
@@ -199,7 +214,7 @@ View distributed traces:
 https://console.aws.amazon.com/xray/home?region=ap-south-1#/service-map
 ```
 
-## 🔧 Local Development
+## Local Development
 
 ### Testing Lambda Function Locally
 ```bash
@@ -281,11 +296,4 @@ aws logs tail /aws/lambda/hello-world-lambda-dev-hello-world --follow
 # Test API Gateway endpoint
 curl -v https://your-api-id.execute-api.ap-south-1.amazonaws.com/dev
 ```
-
-## Additional Resources
-
-- [AWS Lambda Container Images](https://docs.aws.amazon.com/lambda/latest/dg/images.html)
-- [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
-- [GitHub Actions for AWS](https://github.com/aws-actions)
-- [AWS X-Ray Developer Guide](https://docs.aws.amazon.com/xray/latest/devguide/)
 

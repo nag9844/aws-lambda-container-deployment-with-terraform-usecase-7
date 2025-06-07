@@ -6,11 +6,6 @@ terraform {
       version = "~> 5.0"
     }
   }
-
-  backend "s3" {
-    # Configuration will be provided via backend config file
-    # use_lockfile = true will be set via backend config
-  }
 }
 
 provider "aws" {
