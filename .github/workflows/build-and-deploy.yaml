@@ -48,6 +48,14 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-BuildAndDeploy
 
+      - name: Update AWS CLI
+        run: |
+          echo "📦 Updating AWS CLI to latest version..."
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --update
+          aws --version
+
       - name: Verify AWS credentials
         run: |
           aws sts get-caller-identity
@@ -181,6 +189,14 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-UpdateLambda-${{ matrix.environment }}
 
+      - name: Update AWS CLI
+        run: |
+          echo "📦 Updating AWS CLI to latest version..."
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --update
+          aws --version
+
       - name: Update Lambda function to container image
         run: |
           FUNCTION_NAME="hello-world-lambda-${{ matrix.environment }}-hello-world"
@@ -194,36 +210,40 @@ jobs:
             echo "✅ Function exists, updating..."
             
             # Get current function configuration
-            CURRENT_PACKAGE_TYPE=$(aws lambda get-function-configuration --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} --query 'PackageType' --output text)
+            CURRENT_CONFIG=$(aws lambda get-function-configuration --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }})
+            CURRENT_PACKAGE_TYPE=$(echo "$CURRENT_CONFIG" | jq -r '.PackageType // "Zip"')
+            
+            echo "📋 Current package type: $CURRENT_PACKAGE_TYPE"
             
             if [ "$CURRENT_PACKAGE_TYPE" != "Image" ]; then
-              echo "📝 Converting function to use container images..."
-              aws lambda update-function-configuration \
+              echo "📝 Converting function from Zip to Container image..."
+              
+              # For functions that need to be converted from Zip to Image,
+              # we need to recreate them as the package type cannot be changed
+              echo "⚠️ Cannot convert Zip package to Image package directly."
+              echo "💡 The function needs to be recreated with Terraform using Image package type."
+              echo "🔧 Please run 'terraform apply' to recreate the function with container support."
+              
+              # Instead, let's try to update the code if it's already an Image function
+              exit 0
+            else
+              echo "✅ Function already uses container images"
+              
+              # Update function code with container image
+              echo "🔄 Updating function code with container image..."
+              aws lambda update-function-code \
                 --function-name $FUNCTION_NAME \
-                --package-type Image \
+                --image-uri $IMAGE_URI \
                 --region ${{ env.AWS_REGION }}
               
-              # Wait for configuration update
-              echo "⏳ Waiting for configuration update..."
+              # Wait for code update to complete
+              echo "⏳ Waiting for code update to complete..."
               aws lambda wait function-updated \
                 --function-name $FUNCTION_NAME \
                 --region ${{ env.AWS_REGION }}
+              
+              echo "✅ Lambda function updated successfully!"
             fi
-            
-            # Update function code with container image
-            echo "🔄 Updating function code with container image..."
-            aws lambda update-function-code \
-              --function-name $FUNCTION_NAME \
-              --image-uri $IMAGE_URI \
-              --region ${{ env.AWS_REGION }}
-            
-            # Wait for code update to complete
-            echo "⏳ Waiting for code update to complete..."
-            aws lambda wait function-updated \
-              --function-name $FUNCTION_NAME \
-              --region ${{ env.AWS_REGION }}
-            
-            echo "✅ Lambda function updated successfully!"
           else
             echo "⚠️ Function $FUNCTION_NAME does not exist. Skipping update."
             echo "💡 Deploy infrastructure first using Terraform."
@@ -244,6 +264,14 @@ jobs:
           role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-TestDeployment-${{ matrix.environment }}
+
+      - name: Update AWS CLI
+        run: |
+          echo "📦 Updating AWS CLI to latest version..."
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --update
+          aws --version
 
       - name: Test Lambda function
         run: |
@@ -315,8 +343,12 @@ jobs:
           echo ""
           echo "📊 Deployment Summary for ${{ matrix.environment }}:"
           echo "✅ Docker image built and pushed"
-          echo "✅ Lambda function updated (if exists)"
+          echo "✅ Lambda function updated (if exists and supports containers)"
           echo "✅ Tests completed"
+          echo ""
+          echo "💡 Important Notes:"
+          echo "- If Lambda function uses Zip packages, it needs to be recreated with Terraform"
+          echo "- Run 'terraform apply' to ensure functions support container images"
           echo ""
           echo "🔗 Useful links:"
           echo "- ECR Repository: https://console.aws.amazon.com/ecr/repositories/hello-world-lambda-hello-world?region=${{ env.AWS_REGION }}"
