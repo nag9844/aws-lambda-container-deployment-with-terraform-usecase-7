@@ -20,6 +20,11 @@ on:
           - staging
           - prod
 
+permissions:
+  id-token: write
+  contents: read          
+  pull-requests: write
+
 env:
   AWS_REGION: 'ap-south-1'
 

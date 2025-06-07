@@ -12,6 +12,11 @@ on:
           - create
           - destroy
 
+permissions:
+  id-token: write
+  contents: read          
+  pull-requests: write
+
 env:
   AWS_REGION: 'ap-south-1'
   PROJECT_NAME: 'hello-world-lambda'
