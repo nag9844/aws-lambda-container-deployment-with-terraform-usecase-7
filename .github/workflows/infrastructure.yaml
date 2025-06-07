@@ -1,3 +1,4 @@
+name: Infrastructure Deployment
 
 on:
   workflow_dispatch:
@@ -144,13 +145,69 @@ jobs:
               body: comment
             });
 
-  terraform-apply:
-    name: Terraform Apply
+  # Separate apply job for push events (with validation dependency)
+  terraform-apply-push:
+    name: Terraform Apply (Auto)
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event.inputs.action == 'apply'
-    # Only depend on terraform-validate for push events, not for manual workflow_dispatch
-    needs: ${{ github.event_name == 'push' && fromJSON('["terraform-validate"]') || fromJSON('[]') }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [terraform-validate]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=${{ github.event.inputs.environment || 'dev' }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: terraform apply -auto-approve
+
+      - name: Get Outputs
+        id: outputs
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          API_URL=$(terraform output -raw api_gateway_url 2>/dev/null || echo "")
+          LAMBDA_ARN=$(terraform output -raw lambda_function_arn 2>/dev/null || echo "")
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+          echo "lambda_arn=$LAMBDA_ARN" >> $GITHUB_OUTPUT
+
+      - name: Test Deployment
+        if: steps.outputs.outputs.api_url != ''
+        run: |
+          echo "Testing API Gateway endpoint..."
+          curl -f "${{ steps.outputs.outputs.api_url }}" || exit 1
+          echo "Deployment test successful!"
+
+    outputs:
+      api_url: ${{ steps.outputs.outputs.api_url }}
+      lambda_arn: ${{ steps.outputs.outputs.lambda_arn }}
+
+  # Separate apply job for manual workflow dispatch (no dependencies)
+  terraform-apply-manual:
+    name: Terraform Apply (Manual)
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    if: github.event.inputs.action == 'apply'
     
     steps:
       - name: Checkout code
