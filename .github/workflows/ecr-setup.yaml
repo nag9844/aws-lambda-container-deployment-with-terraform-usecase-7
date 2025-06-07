@@ -25,112 +25,179 @@ jobs:
     name: 'Setup ECR Repository - ${{ github.event.inputs.environment }}'
     runs-on: ubuntu-latest
     
+    env:
+      TF_VAR_environment: ${{ github.event.inputs.environment }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.6
     
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
         aws-region: ${{ env.AWS_REGION }}
-    
-    - name: Create ECR repository if not exists
-      env:
-        ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
+
+    - name: Create ECR-only Terraform configuration
       run: |
-        # Check if repository exists
-        if aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region ${{ env.AWS_REGION }} 2>/dev/null; then
-          echo "✅ ECR repository $ECR_REPOSITORY already exists"
-        else
-          echo "🏗️ Creating ECR repository $ECR_REPOSITORY"
-          aws ecr create-repository \
-            --repository-name $ECR_REPOSITORY \
-            --region ${{ env.AWS_REGION }} \
-            --image-scanning-configuration scanOnPush=true \
-            --image-tag-mutability MUTABLE
-          
-          echo "✅ ECR repository $ECR_REPOSITORY created successfully"
-        fi
-    
-    - name: Setup lifecycle policy
-      env:
-        ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
-      run: |
-        echo "📋 Setting up lifecycle policy for $ECR_REPOSITORY"
-        cat > lifecycle-policy.json << 'EOF'
-        {
-          "rules": [
-            {
-              "rulePriority": 1,
-              "description": "Keep last 10 tagged images",
-              "selection": {
-                "tagStatus": "tagged",
-                "countType": "imageCountMoreThan",
-                "countNumber": 10
-              },
-              "action": {
-                "type": "expire"
-              }
-            },
-            {
-              "rulePriority": 2,
-              "description": "Delete untagged images older than 1 day",
-              "selection": {
-                "tagStatus": "untagged",
-                "countType": "sinceImagePushed",
-                "countUnit": "days",
-                "countNumber": 1
-              },
-              "action": {
-                "type": "expire"
-              }
+        # Create a temporary ECR-only configuration
+        cat > ecr-only.tf << 'EOF'
+        terraform {
+          required_version = ">= 1.0"
+          required_providers {
+            aws = {
+              source  = "hashicorp/aws"
+              version = "~> 5.0"
             }
-          ]
+          }
+          
+          backend "s3" {
+            bucket       = "usecases-terraform-state-bucket"
+            key          = "usecase2/ecr-only-statefile.tfstate"
+            region       = "ap-south-1"
+            encrypt      = true
+            use_lockfile = true
+          }
+        }
+
+        provider "aws" {
+          region = var.aws_region
+          
+          default_tags {
+            tags = {
+              Project     = var.project_name
+              Environment = var.environment
+              ManagedBy   = "terraform"
+            }
+          }
+        }
+
+        # Variables
+        variable "aws_region" {
+          description = "AWS region for resources"
+          type        = string
+          default     = "ap-south-1"
+        }
+
+        variable "project_name" {
+          description = "Name of the project"
+          type        = string
+          default     = "hello-world-lambda"
+        }
+
+        variable "environment" {
+          description = "Environment name"
+          type        = string
+        }
+
+        # Local values
+        locals {
+          name_prefix = "${var.project_name}-${var.environment}"
+          
+          common_tags = {
+            Project     = var.project_name
+            Environment = var.environment
+            ManagedBy   = "terraform"
+          }
+        }
+
+        # ECR Module
+        module "ecr" {
+          source = "./modules/ecr"
+          
+          name_prefix      = local.name_prefix
+          repository_name  = "${local.name_prefix}-app"
+          environment      = var.environment
+          project_name     = var.project_name
+          
+          tags = local.common_tags
+        }
+
+        # Outputs
+        output "repository_url" {
+          description = "ECR repository URL"
+          value       = module.ecr.repository_url
+        }
+
+        output "repository_name" {
+          description = "ECR repository name"
+          value       = module.ecr.repository_name
         }
         EOF
+
+    - name: Initialize Terraform for ECR
+      run: terraform init
+
+    - name: Validate Terraform configuration
+      run: terraform validate
+
+    - name: Plan ECR deployment
+      run: terraform plan -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -target=module.ecr
+
+    - name: Apply ECR deployment
+      run: terraform apply -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -target=module.ecr -auto-approve
+
+    - name: Get ECR repository details
+      run: |
+        ECR_REPOSITORY_URL=$(terraform output -raw repository_url)
+        ECR_REPOSITORY_NAME=$(terraform output -raw repository_name)
         
-        aws ecr put-lifecycle-policy \
-          --repository-name $ECR_REPOSITORY \
-          --lifecycle-policy-text file://lifecycle-policy.json \
-          --region ${{ env.AWS_REGION }}
-        
-        echo "✅ Lifecycle policy applied successfully"
-    
+        echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL" >> $GITHUB_ENV
+        echo "ECR_REPOSITORY_NAME=$ECR_REPOSITORY_NAME" >> $GITHUB_ENV
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
     - name: Build and push initial image
       env:
-        ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ env.ECR_REPOSITORY_NAME }}
+        ENVIRONMENT: ${{ github.event.inputs.environment }}
       run: |
-        # Login to ECR
-        aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+        cd ..  # Go back to project root
         
-        # Build initial image
-        echo "🏗️ Building initial Docker image"
-        docker build -t $ECR_REPOSITORY:initial .
+        echo "🏗️ Building initial Docker image for environment: $ENVIRONMENT"
         
-        # Tag and push image
-        ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
-        docker tag $ECR_REPOSITORY:initial $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        docker tag $ECR_REPOSITORY:initial $ECR_REGISTRY/$ECR_REPOSITORY:initial
+        # Build image with build args
+        docker build \
+          --build-arg NODE_ENV=production \
+          --build-arg ENVIRONMENT=$ENVIRONMENT \
+          -t $ECR_REGISTRY/$ECR_REPOSITORY:initial .
         
-        echo "📤 Pushing initial image to ECR"
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        # Tag with latest and environment
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:initial $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:initial $ECR_REGISTRY/$ECR_REPOSITORY:$ENVIRONMENT
+        
+        echo "📤 Pushing images to ECR"
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:initial
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$ENVIRONMENT
         
-        echo "✅ Initial image pushed successfully"
+        echo "✅ Images pushed successfully"
         echo "📋 Repository URI: $ECR_REGISTRY/$ECR_REPOSITORY"
-    
-    - name: Output repository details
-      env:
-        ECR_REPOSITORY: hello-world-lambda-${{ github.event.inputs.environment }}-app
+
+    - name: Cleanup temporary files
       run: |
-        ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
-        
+        rm -f ecr-only.tf
+
+    - name: Output repository details
+      run: |
         echo "## ECR Repository Setup Complete" >> $GITHUB_STEP_SUMMARY
         echo "### Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Repository Name**: \`$ECR_REPOSITORY\`" >> $GITHUB_STEP_SUMMARY
-        echo "- **Repository URI**: \`$ECR_REGISTRY/$ECR_REPOSITORY\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository Name**: \`${{ env.ECR_REPOSITORY_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository URL**: \`${{ env.ECR_REPOSITORY_URL }}\`" >> $GITHUB_STEP_SUMMARY
         echo "- **Region**: \`${{ env.AWS_REGION }}\`" >> $GITHUB_STEP_SUMMARY
-        echo "- **Initial Image**: \`$ECR_REGISTRY/$ECR_REPOSITORY:latest\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Available Tags**: \`latest\`, \`initial\`, \`${{ github.event.inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "✅ **Ready for infrastructure deployment!**" >> $GITHUB_STEP_SUMMARY
