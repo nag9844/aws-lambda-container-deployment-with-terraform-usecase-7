@@ -28,7 +28,7 @@ graph TB
     end
 ```
 
-## 🚀 Features
+## Features
 
 ### Core Infrastructure
 - **VPC**: Multi-AZ setup with public and private subnets
