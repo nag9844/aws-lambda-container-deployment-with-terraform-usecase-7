@@ -26,11 +26,4 @@ variable "private_subnet_ids" {
 variable "lambda_security_group_id" {
   description = "Security group ID for Lambda"
   type        = string
-  default     = ""
-}
-
-variable "api_gateway_execution_arn" {
-  description = "API Gateway execution ARN"
-  type        = string
-  default     = "*"
 }

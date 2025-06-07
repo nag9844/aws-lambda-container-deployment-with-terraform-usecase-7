@@ -5,7 +5,7 @@ output "api_id" {
 
 output "api_url" {
   description = "URL of the API Gateway"
-  value       = aws_api_gateway_deployment.main.invoke_url
+  value       = aws_api_gateway_stage.main.invoke_url
 }
 
 output "execution_arn" {
@@ -15,5 +15,5 @@ output "execution_arn" {
 
 output "stage_name" {
   description = "Stage name of the API Gateway"
-  value       = aws_api_gateway_deployment.main.stage_name
+  value       = aws_api_gateway_stage.main.stage_name
 }

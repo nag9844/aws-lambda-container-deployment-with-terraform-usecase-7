@@ -1,3 +1,4 @@
+# API Gateway REST API
 resource "aws_api_gateway_rest_api" "main" {
   name        = "${var.project_name}-${var.environment}-api"
   description = "API Gateway for ${var.project_name} ${var.environment}"
@@ -7,12 +8,14 @@ resource "aws_api_gateway_rest_api" "main" {
   }
 }
 
+# Proxy resource
 resource "aws_api_gateway_resource" "proxy" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_rest_api.main.root_resource_id
   path_part   = "{proxy+}"
 }
 
+# Proxy method
 resource "aws_api_gateway_method" "proxy" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.proxy.id
@@ -20,6 +23,7 @@ resource "aws_api_gateway_method" "proxy" {
   authorization = "NONE"
 }
 
+# Proxy integration
 resource "aws_api_gateway_integration" "lambda" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   resource_id = aws_api_gateway_method.proxy.resource_id
@@ -30,6 +34,7 @@ resource "aws_api_gateway_integration" "lambda" {
   uri                     = var.lambda_invoke_arn
 }
 
+# Root method
 resource "aws_api_gateway_method" "proxy_root" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_rest_api.main.root_resource_id
@@ -37,6 +42,7 @@ resource "aws_api_gateway_method" "proxy_root" {
   authorization = "NONE"
 }
 
+# Root integration
 resource "aws_api_gateway_integration" "lambda_root" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   resource_id = aws_api_gateway_method.proxy_root.resource_id
@@ -47,6 +53,7 @@ resource "aws_api_gateway_integration" "lambda_root" {
   uri                     = var.lambda_invoke_arn
 }
 
+# Deployment
 resource "aws_api_gateway_deployment" "main" {
   depends_on = [
     aws_api_gateway_integration.lambda,
@@ -54,7 +61,45 @@ resource "aws_api_gateway_deployment" "main" {
   ]
 
   rest_api_id = aws_api_gateway_rest_api.main.id
-  stage_name  = var.environment
+
+  triggers = {
+    redeployment = sha1(jsonencode([
+      aws_api_gateway_resource.proxy.id,
+      aws_api_gateway_method.proxy.id,
+      aws_api_gateway_integration.lambda.id,
+      aws_api_gateway_method.proxy_root.id,
+      aws_api_gateway_integration.lambda_root.id,
+    ]))
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Stage
+resource "aws_api_gateway_stage" "main" {
+  deployment_id = aws_api_gateway_deployment.main.id
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  stage_name    = var.environment
+
+  xray_tracing_enabled = true
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_gateway.arn
+    format = jsonencode({
+      requestId      = "$context.requestId"
+      ip             = "$context.identity.sourceIp"
+      caller         = "$context.identity.caller"
+      user           = "$context.identity.user"
+      requestTime    = "$context.requestTime"
+      httpMethod     = "$context.httpMethod"
+      resourcePath   = "$context.resourcePath"
+      status         = "$context.status"
+      protocol       = "$context.protocol"
+      responseLength = "$context.responseLength"
+    })
+  }
 }
 
 # Lambda permission for API Gateway
@@ -102,7 +147,7 @@ resource "aws_iam_role_policy_attachment" "api_gateway_cloudwatch" {
 # Method Settings for logging
 resource "aws_api_gateway_method_settings" "all" {
   rest_api_id = aws_api_gateway_rest_api.main.id
-  stage_name  = aws_api_gateway_deployment.main.stage_name
+  stage_name  = aws_api_gateway_stage.main.stage_name
   method_path = "*/*"
 
   settings {
