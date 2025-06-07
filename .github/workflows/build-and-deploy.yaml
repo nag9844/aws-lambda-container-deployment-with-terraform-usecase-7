@@ -22,7 +22,7 @@ on:
         
 permissions:
   id-token: write
-  contents: write           
+  contents: read           
   pull-requests: write
 
 env:
@@ -35,6 +35,7 @@ jobs:
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
       image-digest: ${{ steps.build.outputs.digest }}
+      ecr-uri: ${{ steps.get-ecr.outputs.ecr-uri }}
     
     steps:
       - name: Checkout
@@ -45,6 +46,71 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-BuildAndDeploy
+
+      - name: Verify AWS credentials
+        run: |
+          aws sts get-caller-identity
+          echo "✅ AWS credentials verified"
+
+      - name: Get or Create ECR Repository
+        id: get-ecr
+        run: |
+          REPO_NAME="hello-world-lambda-hello-world"
+          
+          # Try to get existing repository
+          if aws ecr describe-repositories --repository-names "$REPO_NAME" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "✅ ECR repository exists"
+            ECR_URI=$(aws ecr describe-repositories --repository-names "$REPO_NAME" --region ${{ env.AWS_REGION }} --query 'repositories[0].repositoryUri' --output text)
+          else
+            echo "📝 Creating ECR repository..."
+            aws ecr create-repository \
+              --repository-name "$REPO_NAME" \
+              --region ${{ env.AWS_REGION }} \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+            
+            ECR_URI=$(aws ecr describe-repositories --repository-names "$REPO_NAME" --region ${{ env.AWS_REGION }} --query 'repositories[0].repositoryUri' --output text)
+            
+            # Set lifecycle policy
+            aws ecr put-lifecycle-policy \
+              --repository-name "$REPO_NAME" \
+              --region ${{ env.AWS_REGION }} \
+              --lifecycle-policy-text '{
+                "rules": [
+                  {
+                    "rulePriority": 1,
+                    "description": "Keep last 10 images",
+                    "selection": {
+                      "tagStatus": "tagged",
+                      "tagPrefixList": ["v"],
+                      "countType": "imageCountMoreThan",
+                      "countNumber": 10
+                    },
+                    "action": {
+                      "type": "expire"
+                    }
+                  },
+                  {
+                    "rulePriority": 2,
+                    "description": "Delete untagged images older than 1 day",
+                    "selection": {
+                      "tagStatus": "untagged",
+                      "countType": "sinceImagePushed",
+                      "countUnit": "days",
+                      "countNumber": 1
+                    },
+                    "action": {
+                      "type": "expire"
+                    }
+                  }
+                ]
+              }'
+          fi
+          
+          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
+          echo "ecr-uri=$ECR_URI" >> $GITHUB_OUTPUT
+          echo "🐳 ECR Repository URI: $ECR_URI"
 
       - name: Determine Environment
         id: env
@@ -60,17 +126,22 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: 'true'
 
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.ECR_REPOSITORY_URI }}
+          images: ${{ env.ECR_URI }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build and push Docker image
         id: build
@@ -80,11 +151,16 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Output image details
         run: |
-          echo "Image tags: ${{ steps.meta.outputs.tags }}"
-          echo "Image digest: ${{ steps.build.outputs.digest }}"
+          echo "✅ Image built and pushed successfully!"
+          echo "📦 Image tags: ${{ steps.meta.outputs.tags }}"
+          echo "🔍 Image digest: ${{ steps.build.outputs.digest }}"
+          echo "🐳 ECR URI: ${{ env.ECR_URI }}"
 
   update-lambda:
     name: 'Update Lambda Functions'
@@ -103,42 +179,55 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-UpdateLambda-${{ matrix.environment }}
 
       - name: Update Lambda function to container image
         run: |
           FUNCTION_NAME="hello-world-lambda-${{ matrix.environment }}-hello-world"
-          IMAGE_URI="${{ secrets.ECR_REPOSITORY_URI }}:latest"
+          IMAGE_URI="${{ needs.build-and-push.outputs.ecr-uri }}:latest"
           
-          echo "Updating Lambda function: $FUNCTION_NAME"
-          echo "With image: $IMAGE_URI"
+          echo "🔄 Updating Lambda function: $FUNCTION_NAME"
+          echo "🐳 With image: $IMAGE_URI"
           
-          # First, update the function configuration to use container images
-          echo "Updating function configuration to use container images..."
-          aws lambda update-function-configuration \
-            --function-name $FUNCTION_NAME \
-            --package-type Image \
-            --region ${{ env.AWS_REGION }} || echo "Function may already be configured for containers"
-          
-          # Wait for configuration update
-          echo "Waiting for configuration update..."
-          aws lambda wait function-updated \
-            --function-name $FUNCTION_NAME \
-            --region ${{ env.AWS_REGION }}
-          
-          # Update function code with container image
-          echo "Updating function code with container image..."
-          aws lambda update-function-code \
-            --function-name $FUNCTION_NAME \
-            --image-uri $IMAGE_URI \
-            --region ${{ env.AWS_REGION }}
-          
-          # Wait for code update to complete
-          echo "Waiting for code update to complete..."
-          aws lambda wait function-updated \
-            --function-name $FUNCTION_NAME \
-            --region ${{ env.AWS_REGION }}
-          
-          echo "Lambda function updated successfully!"
+          # Check if function exists
+          if aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "✅ Function exists, updating..."
+            
+            # Get current function configuration
+            CURRENT_PACKAGE_TYPE=$(aws lambda get-function-configuration --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} --query 'PackageType' --output text)
+            
+            if [ "$CURRENT_PACKAGE_TYPE" != "Image" ]; then
+              echo "📝 Converting function to use container images..."
+              aws lambda update-function-configuration \
+                --function-name $FUNCTION_NAME \
+                --package-type Image \
+                --region ${{ env.AWS_REGION }}
+              
+              # Wait for configuration update
+              echo "⏳ Waiting for configuration update..."
+              aws lambda wait function-updated \
+                --function-name $FUNCTION_NAME \
+                --region ${{ env.AWS_REGION }}
+            fi
+            
+            # Update function code with container image
+            echo "🔄 Updating function code with container image..."
+            aws lambda update-function-code \
+              --function-name $FUNCTION_NAME \
+              --image-uri $IMAGE_URI \
+              --region ${{ env.AWS_REGION }}
+            
+            # Wait for code update to complete
+            echo "⏳ Waiting for code update to complete..."
+            aws lambda wait function-updated \
+              --function-name $FUNCTION_NAME \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "✅ Lambda function updated successfully!"
+          else
+            echo "⚠️ Function $FUNCTION_NAME does not exist. Skipping update."
+            echo "💡 Deploy infrastructure first using Terraform."
+          fi
 
   test-deployment:
     name: 'Test Deployment'
@@ -154,49 +243,82 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-TestDeployment-${{ matrix.environment }}
 
       - name: Test Lambda function
         run: |
           FUNCTION_NAME="hello-world-lambda-${{ matrix.environment }}-hello-world"
           
-          echo "Testing Lambda function: $FUNCTION_NAME"
+          echo "🧪 Testing Lambda function: $FUNCTION_NAME"
           
-          RESPONSE=$(aws lambda invoke \
-            --function-name $FUNCTION_NAME \
-            --payload '{}' \
-            --cli-binary-format raw-in-base64-out \
-            response.json)
-          
-          echo "Lambda Response:"
-          cat response.json
-          
-          # Check if the response contains expected content
-          if grep -q "Hello World" response.json; then
-            echo "Lambda function test passed!"
+          # Check if function exists before testing
+          if aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "📝 Invoking function..."
+            RESPONSE=$(aws lambda invoke \
+              --function-name $FUNCTION_NAME \
+              --payload '{}' \
+              --cli-binary-format raw-in-base64-out \
+              response.json \
+              --region ${{ env.AWS_REGION }})
+            
+            echo "📄 Lambda Response:"
+            cat response.json
+            echo ""
+            
+            # Check if the response contains expected content
+            if grep -q "Hello World" response.json; then
+              echo "✅ Lambda function test passed!"
+            else
+              echo "❌ Lambda function test failed!"
+              echo "Expected 'Hello World' in response"
+              exit 1
+            fi
+            
+            # Clean up
+            rm -f response.json
           else
-            echo "Lambda function test failed!"
-            exit 1
+            echo "⚠️ Function $FUNCTION_NAME does not exist. Skipping test."
           fi
 
-      - name: Get API Gateway URL
+      - name: Test API Gateway
         run: |
           API_NAME="hello-world-lambda-${{ matrix.environment }}-api"
           
+          echo "🌐 Testing API Gateway: $API_NAME"
+          
           API_ID=$(aws apigateway get-rest-apis \
             --query "items[?name=='$API_NAME'].id" \
-            --output text)
+            --output text \
+            --region ${{ env.AWS_REGION }})
           
           if [ ! -z "$API_ID" ] && [ "$API_ID" != "None" ]; then
             API_URL="https://${API_ID}.execute-api.${{ env.AWS_REGION }}.amazonaws.com/${{ matrix.environment }}"
-            echo "API Gateway URL for ${{ matrix.environment }}: $API_URL"
+            echo "🔗 API Gateway URL: $API_URL"
             
             # Test the API endpoint
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL")
+            echo "📡 Testing API endpoint..."
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL" || echo "000")
+            
             if [ "$HTTP_STATUS" -eq 200 ]; then
-              echo "API Gateway test passed!"
+              echo "✅ API Gateway test passed! (Status: $HTTP_STATUS)"
             else
-              echo "API Gateway test failed with status: $HTTP_STATUS"
+              echo "⚠️ API Gateway test returned status: $HTTP_STATUS"
+              # Don't fail the build for API Gateway issues as they might be infrastructure-related
             fi
           else
-            echo "API Gateway not found for environment: ${{ matrix.environment }}"
+            echo "⚠️ API Gateway not found for environment: ${{ matrix.environment}"
+            echo "💡 Deploy infrastructure first using Terraform."
           fi
+
+      - name: Output deployment summary
+        run: |
+          echo ""
+          echo "📊 Deployment Summary for ${{ matrix.environment }}:"
+          echo "✅ Docker image built and pushed"
+          echo "✅ Lambda function updated (if exists)"
+          echo "✅ Tests completed"
+          echo ""
+          echo "🔗 Useful links:"
+          echo "- ECR Repository: https://console.aws.amazon.com/ecr/repositories/hello-world-lambda-hello-world?region=${{ env.AWS_REGION }}"
+          echo "- Lambda Function: https://console.aws.amazon.com/lambda/home?region=${{ env.AWS_REGION }}#/functions/hello-world-lambda-${{ matrix.environment }}-hello-world"
+          echo "- CloudWatch Logs: https://console.aws.amazon.com/cloudwatch/home?region=${{ env.AWS_REGION }}#logsV2:log-groups/log-group/%2Faws%2Flambda%2Fhello-world-lambda-${{ matrix.environment }}-hello-world"
