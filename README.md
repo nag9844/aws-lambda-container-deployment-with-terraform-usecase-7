@@ -2,7 +2,7 @@
 
 This project demonstrates a complete DevOps pipeline for deploying a containerized "Hello World" application to AWS Lambda using Infrastructure as Code (Terraform), CI/CD (GitHub Actions), and comprehensive monitoring.
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 graph TB
@@ -28,7 +28,7 @@ graph TB
     end
 ```
 
-## 🚀 Features
+## Features
 
 ### Core Infrastructure
 - **VPC**: Multi-AZ setup with public and private subnets
@@ -44,7 +44,7 @@ graph TB
 - **State Management**: Remote state with S3 and native locking
 - **Security**: Least privilege IAM, VPC isolation, encryption
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 ├── terraform/                 # Terraform infrastructure code
@@ -75,14 +75,14 @@ graph TB
 └── README.md            # This file
 ```
 
-## 🛠️ Prerequisites
+## Prerequisites
 
 - AWS CLI configured with appropriate permissions
 - Terraform >= 1.5.0
 - Docker
 - GitHub repository with required secrets
 
-## 📋 Required GitHub Secrets
+## Required GitHub Secrets
 
 Set these secrets in your GitHub repository:
 
@@ -93,7 +93,7 @@ TF_STATE_BUCKET          # S3 bucket for Terraform state (after backend setup)
 ECR_REPOSITORY_URI       # ECR repository URI (after first deployment)
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Set Up Terraform Backend
 
@@ -132,7 +132,7 @@ export AWS_REGION="ap-south-1"
 2. Push changes to trigger the CI/CD pipeline
 3. The pipeline will automatically deploy to different environments based on the branch
 
-## 🔄 CI/CD Workflows
+## CI/CD Workflows
 
 ### Backend Setup Workflow
 - **Trigger**: Manual workflow dispatch
@@ -155,7 +155,7 @@ export AWS_REGION="ap-south-1"
   - Update Lambda functions across environments
   - Run integration tests
 
-## 🏗️ Infrastructure Components
+## Infrastructure Components
 
 ### VPC Module
 - Multi-AZ VPC with public and private subnets
@@ -179,7 +179,7 @@ export AWS_REGION="ap-south-1"
 - Alarms for error rates and performance
 - SNS topics for alerting
 
-## 📊 Monitoring and Observability
+## Monitoring and Observability
 
 ### CloudWatch Dashboards
 Access your monitoring dashboard:
@@ -218,7 +218,7 @@ docker run -p 9000:8080 hello-world-lambda
 curl -XPOST "http://localhost:9000/2015-03-31/functions/function/invocations" -d '{}'
 ```
 
-## 🌍 Multi-Environment Management
+## Multi-Environment Management
 
 ### Environment Differences
 - **Dev**: Minimal resources, relaxed monitoring
@@ -234,7 +234,7 @@ curl -XPOST "http://localhost:9000/2015-03-31/functions/function/invocations" -d
 ./scripts/deploy.sh prod
 ```
 
-## 🔒 Security Considerations
+## Security Considerations
 
 ### IAM Security
 - Least privilege principle applied to all roles
@@ -250,7 +250,7 @@ curl -XPOST "http://localhost:9000/2015-03-31/functions/function/invocations" -d
 - Encryption in transit for all communications
 - CloudWatch logs encryption
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -282,32 +282,10 @@ aws logs tail /aws/lambda/hello-world-lambda-dev-hello-world --follow
 curl -v https://your-api-id.execute-api.ap-south-1.amazonaws.com/dev
 ```
 
-## 📚 Additional Resources
+## Additional Resources
 
 - [AWS Lambda Container Images](https://docs.aws.amazon.com/lambda/latest/dg/images.html)
 - [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
 - [GitHub Actions for AWS](https://github.com/aws-actions)
 - [AWS X-Ray Developer Guide](https://docs.aws.amazon.com/xray/latest/devguide/)
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 📞 Support
-
-For issues and questions:
-1. Check the troubleshooting section
-2. Review CloudWatch logs
-3. Open a GitHub issue with detailed information
-
----
-
-**Happy Deploying! 🚀**
