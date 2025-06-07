@@ -3,7 +3,7 @@ output "vpc_id" {
   value       = module.vpc.vpc_id
 }
 
-output "ecr_repository_uri" {
+output "ecr_repository_url" {
   description = "URI of the ECR repository"
   value       = module.ecr.repository_uri
 }
@@ -39,7 +39,7 @@ output "deployment_summary" {
   value = {
     environment         = "staging"
     api_gateway_url    = module.api_gateway.api_url
-    ecr_repository_uri = module.ecr.repository_uri
+    ecr_repository_url = module.ecr.repository_uri
     dashboard_url      = module.monitoring.dashboard_url
   }
 }
