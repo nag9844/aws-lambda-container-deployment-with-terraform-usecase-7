@@ -1,10 +1,8 @@
 environment = "dev"
 aws_region  = "ap-south-1"
+project_name = "hello-world-lambda"
 
-# VPC Configuration
-vpc_cidr           = "10.0.0.0/16"
-availability_zones = ["ap-south-1a", "ap-south-1b"]
-
-# Lambda Configuration
-lambda_memory_size = 256
-lambda_timeout     = 15
+vpc_cidr                = "10.0.0.0/16"
+public_subnet_cidrs     = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs    = ["10.0.10.0/24", "10.0.20.0/24"]
+availability_zones      = ["ap-south-1a", "ap-south-1b"]

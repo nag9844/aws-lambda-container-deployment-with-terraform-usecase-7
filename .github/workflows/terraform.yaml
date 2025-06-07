@@ -1,117 +1,128 @@
-name: AWS infra
+name: 'Terraform Infrastructure'
 
 on:
+  push:
+    branches: [ "main" ]
+    paths: [ "terraform/**" ]
+  pull_request:
+    branches: [ "main" ]
+    paths: [ "terraform/**" ]
   workflow_dispatch:
     inputs:
-      action:
-        description: 'Terraform Action'
-        required: true
-        default: 'apply'
-        type: choice
-        options:
-          - apply
-          - destroy
       environment:
-        description: 'Environment'
+        description: 'Environment to deploy'
         required: true
         default: 'dev'
         type: choice
         options:
-          - dev
-          - staging
-          - prod
+        - dev
+        - staging
+        - prod
+      action:
+        description: 'Terraform action'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+        - plan
+        - apply
+        - destroy
 
 permissions:
-  id-token: write
   contents: read
+  pull-requests: write
+  id-token: write
 
 jobs:
-  lint-and-security:
-    name: Lint and Security Checks
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.6
-
-      - name: Install TFLint
-        run: |
-          wget https://github.com/terraform-linters/tflint/releases/download/v0.50.2/tflint_linux_amd64.zip
-          unzip tflint_linux_amd64.zip
-          sudo mv tflint /usr/local/bin/
-          tflint --version
-
-      - name: Check Terraform formatting
-        run: |
-          cd terraform
-          terraform fmt  -recursive
-
-      - name: Run TFLint
-        run: |
-          cd terraform
-          tflint --init && tflint -f compact
-
   terraform:
-    name: Terraform ${{ github.event.inputs.action }} - ${{ github.event.inputs.environment }}
+    name: 'Terraform'
     runs-on: ubuntu-latest
-    needs: lint-and-security
+    environment: ${{ github.event.inputs.environment || 'dev' }}
     
-    env:
-      AWS_REGION: ap-south-1
-      TF_VAR_environment: ${{ github.event.inputs.environment }}
-
     defaults:
       run:
         shell: bash
         working-directory: terraform
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.6
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ap-south-1
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
-          aws-region: ${{ env.AWS_REGION }}
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ~1.0
 
-      - name: Initialize Terraform
-        run: terraform init
+    - name: Terraform Format
+      id: fmt
+      run: terraform fmt -check -recursive
+      continue-on-error: true
 
-      - name: Validate Terraform
-        run: terraform validate
+    - name: Terraform Init
+      id: init
+      run: |
+        ENV=${{ github.event.inputs.environment || 'dev' }}
+        terraform init -backend-config=environments/${ENV}/backend.tf
 
-      - name: Terraform Plan
-        if: github.event.inputs.action == 'apply'
-        run: terraform plan -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -out=tfplan.binary
+    - name: Terraform Validate
+      id: validate
+      run: terraform validate -no-color
 
-      - name: Show Terraform Plan Summary
-        if: github.event.inputs.action == 'apply'
-        run: terraform show -no-color tfplan.binary
+    - name: Terraform Plan
+      id: plan
+      if: github.event_name == 'pull_request' || github.event.inputs.action == 'plan'
+      run: |
+        ENV=${{ github.event.inputs.environment || 'dev' }}
+        terraform plan -var-file=environments/${ENV}/terraform.tfvars -no-color -input=false
+      continue-on-error: true
 
-      - name: Terraform Apply (from saved plan)
-        if: github.event.inputs.action == 'apply'
-        run: terraform apply -auto-approve tfplan.binary
+    - name: Update Pull Request
+      uses: actions/github-script@v7
+      if: github.event_name == 'pull_request'
+      env:
+        PLAN: ${{ steps.plan.outputs.stdout }}
+      with:
+        script: |
+          const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+          #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+          #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
+          #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
 
-      - name: Terraform Destroy
-        if: github.event.inputs.action == 'destroy'
-        run: terraform destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve
+          <details><summary>Show Plan</summary>
 
-      - name: Output Infrastructure Details
-        if: github.event.inputs.action == 'apply'
-        run: |
-          echo "## Infrastructure Outputs" >> $GITHUB_STEP_SUMMARY
-          echo "### Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          terraform output >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          \`\`\`terraform\n
+          ${process.env.PLAN}
+          \`\`\`
+
+          </details>
+
+          *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: output
+          })
+
+    - name: Terraform Plan Status
+      if: steps.plan.outcome == 'failure'
+      run: exit 1
+
+    - name: Terraform Apply
+      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event.inputs.action == 'apply'
+      run: |
+        ENV=${{ github.event.inputs.environment || 'dev' }}
+        terraform apply -var-file=environments/${ENV}/terraform.tfvars -auto-approve -input=false
+
+    - name: Terraform Destroy
+      if: github.event.inputs.action == 'destroy'
+      run: |
+        ENV=${{ github.event.inputs.environment || 'dev' }}
+        terraform destroy -var-file=environments/${ENV}/terraform.tfvars -auto-approve -input=false

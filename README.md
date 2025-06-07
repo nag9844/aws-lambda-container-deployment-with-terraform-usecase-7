@@ -1,388 +1,379 @@
-# Hello World Lambda - AWS DevOps Challenge
+# Hello World Lambda Container Deployment
 
-A comprehensive DevOps implementation showcasing containerized AWS Lambda deployment with Infrastructure as Code, CI/CD pipelines, and monitoring using OIDC authentication.
+This project demonstrates a complete DevOps pipeline for deploying a containerized "Hello World" Lambda function using AWS services, Terraform for Infrastructure as Code, and GitHub Actions for CI/CD.
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
-This project demonstrates:
-- **Containerized Lambda Functions**: React app deployed as container images
-- **Multi-Environment Infrastructure**: Separate dev, staging, and production environments
-- **Infrastructure as Code**: Complete AWS infrastructure managed with Terraform
-- **CI/CD Automation**: GitHub Actions with OIDC authentication for secure deployments
-- **Monitoring & Logging**: CloudWatch dashboards, alarms, and X-Ray tracing
 
-## 📋 Prerequisites
-
-- AWS Account with OIDC provider configured
-- GitHub repository with Actions enabled
-- Local development environment:
-  - Node.js 18+
-  - Docker
-  - Terraform 1.6+
-  - AWS CLI configured
-
-## 🔐 OIDC Setup
-
-This project uses OpenID Connect (OIDC) for secure authentication with AWS. The GitHub Actions workflows assume you have:
-
-1. **OIDC Identity Provider** configured in AWS IAM
-2. **IAM Role** with trust policy for GitHub Actions: `arn:aws:iam::199570228070:role/oidc-demo-role`
-
-### Required IAM Permissions
-
-The OIDC role should have permissions for:
-- EC2 (VPC, Subnets, Security Groups)
-- Lambda (Functions, Permissions)
-- ECR (Repositories, Images)
-- API Gateway (APIs, Routes, Stages)
-- CloudWatch (Log Groups, Dashboards, Alarms)
-- IAM (Roles, Policies)
-
-## 🚀 Deployment Process
-
-### Step 1: Setup ECR Repository
-
-Before deploying infrastructure, you need to create the ECR repository and push an initial image:
-
-1. Go to **Actions** → **Setup ECR Repository**
-2. Click **Run workflow**
-3. Select your environment (dev/staging/prod)
-4. Wait for completion
-
-This workflow will:
-- ✅ Create ECR repository if it doesn't exist
-- ✅ Setup lifecycle policies for image management
-- ✅ Build and push initial Docker image
-- ✅ Make the repository ready for Lambda deployment
-
-### Step 2: Deploy Infrastructure
-
-After ECR setup is complete:
-
-1. Go to **Actions** → **Deploy Infrastructure**
-2. Click **Run workflow**
-3. Select:
-   - **Action**: `apply`
-   - **Environment**: Same as Step 1
-4. Wait for completion
-
-This workflow will:
-- ✅ Validate Terraform configuration
-- ✅ Check ECR repository exists
-- ✅ Deploy all AWS infrastructure
-- ✅ Create Lambda function using ECR image
-
-### Step 3: Deploy Application Updates
-
-For subsequent application updates:
-
-1. **Automatic**: Push to `main` (prod) or `develop` (dev) branches
-2. **Manual**: Go to **Actions** → **Build and Deploy Application**
-
-This workflow will:
-- ✅ Test and build application
-- ✅ Build new Docker image
-- ✅ Push to ECR
-- ✅ Update Lambda function
-- ✅ Test deployment
-
-## 🧹 Cleanup and Destruction
-
-### Regular Cleanup
-
-For normal environment cleanup:
-
-1. Go to **Actions** → **Cleanup Environment**
-2. Click **Run workflow**
-3. Select:
-   - **Environment**: Environment to cleanup
-   - **Cleanup Level**: 
-     - `infrastructure-only`: Keeps ECR repository and images
-     - `complete-cleanup`: Deletes everything including ECR
-
-**Cleanup Levels:**
-
-| Level | Infrastructure | ECR Repository | Use Case |
-|-------|---------------|----------------|----------|
-| Infrastructure Only | ✅ Destroyed | ❌ Preserved | Temporary infrastructure removal |
-| Complete Cleanup | ✅ Destroyed | ✅ Deleted | Full environment removal |
-
-### Emergency Cleanup
-
-For stuck resources or emergency situations:
-
-1. Go to **Actions** → **Emergency Cleanup**
-2. Click **Run workflow**
-3. Type `EMERGENCY-CLEANUP` in the confirmation field
-4. Select environment
-
-**⚠️ Warning**: Emergency cleanup forcefully deletes resources and may leave some resources requiring manual cleanup.
-
-### Manual Cleanup Commands
-
-If workflows fail, you can manually clean up:
-
-```bash
-# Delete Lambda function
-aws lambda delete-function --function-name hello-world-lambda-dev-app --region ap-south-1
-
-# Delete API Gateway (get API ID first)
-aws apigatewayv2 get-apis --query "Items[?Name=='hello-world-lambda-dev-api'].ApiId" --output text
-aws apigatewayv2 delete-api --api-id <API_ID>
-
-# Delete ECR repository
-aws ecr delete-repository --repository-name hello-world-lambda-dev-app --force --region ap-south-1
-
-# Delete CloudWatch log groups
-aws logs delete-log-group --log-group-name /aws/lambda/hello-world-lambda-dev-app
+```mermaid
+graph TB
+    A[GitHub Repository] --> B[GitHub Actions]
+    B --> C[Docker Build & Push]
+    C --> D[Amazon ECR]
+    B --> E[Terraform Apply]
+    E --> F[AWS Lambda]
+    E --> G[API Gateway]
+    E --> H[VPC & Networking]
+    E --> I[CloudWatch & X-Ray]
+    D --> F
+    G --> F
+    H --> F
+    F --> I
+    
+    subgraph "AWS Infrastructure (ap-south-1)"
+        F
+        G
+        H
+        I
+        D
+    end
 ```
 
-## 🔄 GitHub Actions Workflows
 
-### Deployment Workflows
+### Core Components
 
-1. **Setup ECR Repository** (`ecr-setup.yml`)
-   - **Trigger**: Manual workflow dispatch
-   - **Purpose**: Create ECR repository and push initial image
-   - **Run First**: Before any infrastructure deployment
-
-2. **Deploy Infrastructure** (`infrastructure.yml`)
-   - **Trigger**: Manual workflow dispatch
-   - **Purpose**: Deploy/destroy AWS infrastructure with Terraform
-   - **Prerequisites**: ECR repository must exist
-
-3. **Build and Deploy Application** (`build-and-deploy.yml`)
-   - **Trigger**: Push to main/develop, manual dispatch
-   - **Purpose**: Build and deploy application updates
-   - **Prerequisites**: Infrastructure must be deployed
-
-### Cleanup Workflows
-
-4. **Cleanup Environment** (`cleanup-environment.yml`)
-   - **Trigger**: Manual workflow dispatch
-   - **Purpose**: Controlled cleanup with options
-   - **Options**: Infrastructure-only or complete cleanup
-
-5. **Emergency Cleanup** (`emergency-cleanup.yml`)
-   - **Trigger**: Manual workflow dispatch with confirmation
-   - **Purpose**: Force delete stuck resources
-   - **Use**: When normal cleanup fails
-
-## 🏗️ Infrastructure Components
-
-### Core AWS Resources
-
-- **VPC**: Multi-AZ setup with public/private subnets
-- **Lambda**: Container-based functions with VPC integration
-- **API Gateway**: HTTP API for Lambda invocation
-- **ECR**: Container registry for Docker images
-- **CloudWatch**: Logging, monitoring, and alerting
+- **AWS Lambda**: Containerized function using ECR images
+- **Amazon ECR**: Container registry for Docker images
+- **API Gateway**: REST API to trigger Lambda functions
+- **VPC**: Multi-AZ setup with public and private subnets
+- **CloudWatch**: Monitoring and logging
 - **X-Ray**: Distributed tracing
 
-### Terraform Structure
+### Infrastructure Features
+
+- **Multi-Environment Support**: dev, staging, prod
+- **Remote State Management**: Uses existing S3 bucket with file-based locking
+- **Security**: VPC isolation, IAM roles, security groups
+- **Monitoring**: CloudWatch alarms and X-Ray tracing
+- **CI/CD**: Automated testing, building, and deployment
+- **Pure Terraform**: No shell scripts, only Infrastructure as Code
+
+## Project Structure
 
 ```
-terraform/
-├── main.tf                 # Root configuration with S3 backend
-├── variables.tf           # Variable definitions
-├── outputs.tf            # Output values
-├── modules/              # Reusable modules
-│   ├── vpc/             # VPC and networking
-│   ├── ecr/             # Container registry
-│   ├── iam/             # IAM roles and policies
-│   ├── lambda/          # Lambda functions
-│   ├── api_gateway/     # API Gateway
-│   └── cloudwatch/      # Monitoring
-└── environments/        # Environment-specific configs
-    ├── dev/
-    ├── staging/
-    └── prod/
+├── terraform/
+│   ├── main.tf                   # Main Terraform configuration
+│   ├── variables.tf              # Input variables
+│   ├── outputs.tf                # Output values
+│   ├── modules/                  # Reusable Terraform modules
+│   │   ├── vpc/                  # VPC and networking
+│   │   ├── ecr/                  # ECR repository
+│   │   ├── lambda/               # Lambda function
+│   │   ├── api-gateway/          # API Gateway
+│   │   └── cloudwatch/           # Monitoring
+│   └── environments/             # Environment-specific configs
+│       ├── dev/
+│       ├── staging/
+│       └── prod/
+├── src/lambda/                   # Lambda function source code
+├── .github/workflows/            # GitHub Actions workflows
+├── Dockerfile                    # Lambda container image
+└── README.md
 ```
 
-## 📊 Monitoring
+## Prerequisites
 
-### CloudWatch Dashboards
-- Lambda execution metrics (duration, errors, invocations)
-- API Gateway performance metrics
-- Custom alarms for error rates and performance
+- AWS CLI configured with appropriate permissions
+- Terraform >= 1.0
+- Docker
+- GitHub repository with Actions enabled
+- **Existing Terraform state bucket**: `usecases-terraform-state-bucket`
 
-### X-Ray Tracing
-- End-to-end request tracing
-- Performance bottleneck identification
-- Service dependency mapping
+## State Management
 
-## 🔒 Security Features
+This project uses your existing Terraform state infrastructure with file-based locking:
 
-- **OIDC Authentication**: No long-lived AWS credentials in GitHub
-- **IAM Least Privilege**: Minimal required permissions
-- **VPC Isolation**: Lambda functions in private subnets
-- **Encryption**: S3 state encryption, CloudWatch logs encryption
-- **Container Scanning**: ECR vulnerability scanning enabled
+- **S3 Bucket**: `usecases-terraform-state-bucket`
+- **State Key Pattern**: `usecase6/{environment}/terraform.tfstate`
+- **Region**: `ap-south-1`
+- **Encryption**: Enabled
+- **Locking**: File-based locking (`use_lockfile = true`)
 
-## 🌍 Multi-Environment Support
+### Environment State Keys:
+- **Dev**: `usecase6/dev/terraform.tfstate`
+- **Staging**: `usecase6/staging/terraform.tfstate`
+- **Prod**: `usecase6/prod/terraform.tfstate`
 
-Each environment has:
-- Separate Terraform state in S3
-- Environment-specific variables
-- Isolated AWS resources
-- Independent CI/CD workflows
-
-### Environment Configuration
-
-| Environment | VPC CIDR | Lambda Memory | Timeout | Region |
-|------------|----------|---------------|---------|---------|
-| Dev | 10.0.0.0/16 | 256 MB | 15s | ap-south-1 |
-| Staging | 10.1.0.0/16 | 512 MB | 30s | ap-south-1 |
-| Production | 10.2.0.0/16 | 1024 MB | 60s | ap-south-1 |
-
-## 🛠️ Local Development
-
-### Run Application Locally
-```bash
-npm run dev
+### State Locking Mechanism:
+```hcl
+terraform {
+  backend "s3" {
+    bucket        = "usecases-terraform-state-bucket"
+    key           = "usecase6/statefile.tfstate"
+    region        = "ap-south-1"
+    encrypt       = true
+    use_lockfile  = true
+  }
+}
 ```
 
-### Test Docker Container
-```bash
-docker build -t hello-world-lambda .
-docker run -p 9000:8080 hello-world-lambda
-```
+**File-based Locking Benefits:**
+- ✅ **No DynamoDB Required**: Uses S3 lock files instead
+- ✅ **Automatic Conflict Prevention**: Terraform handles lock acquisition/release
+- ✅ **Cost Effective**: No additional AWS service charges
+- ✅ **Simple Setup**: Works with existing S3 bucket
 
-### Terraform Commands
+## Setup Instructions
+
+### 1. GitHub Actions Setup
+
+1. **Configure AWS credentials** in GitHub Secrets:
+   - `AWS_ROLE_ARN`: ARN of the IAM role for GitHub Actions
+   - Set up OIDC provider for secure authentication
+
+2. **Environment Protection Rules**:
+   - Set up environment protection rules in GitHub
+   - Configure required reviewers for production deployments
+
+### 2. Deploy Infrastructure
+
+**Automatic Deployment:**
+- Push changes to `main` branch
+- GitHub Actions will automatically plan and apply changes
+
+**Manual Deployment:**
+1. Go to **Actions** → **Terraform Infrastructure**
+2. Click **Run workflow**
+3. Choose environment and action (plan/apply/destroy)
+
+**Local Deployment:**
 ```bash
 cd terraform
-
-# Format code
-terraform fmt -recursive
-
-# Validate configuration
-terraform validate
-
-# Plan changes
+terraform init -backend-config=environments/dev/backend.tf
 terraform plan -var-file=environments/dev/terraform.tfvars
-
-# Apply changes
 terraform apply -var-file=environments/dev/terraform.tfvars
 ```
 
-## 🔧 Troubleshooting
+## Deployment Process
+
+### Infrastructure Deployment
+```
+Terraform Workflow → VPC → ECR → Lambda → API Gateway → CloudWatch
+```
+
+### Application Deployment
+```
+Docker Build Workflow → Build Image → Push to ECR → Update Lambda
+```
+
+## Lambda Container Image Challenge Solution
+
+The project solves the "Lambda expecting Docker image from ECR" challenge through:
+
+### **Pure Terraform Approach:**
+
+1. **ECR Repository Creation**: Created first via Terraform
+2. **Placeholder Image**: Terraform creates a minimal placeholder image if none exists
+3. **Lifecycle Management**: Lambda uses `ignore_changes = [image_uri]` to prevent errors
+4. **CI/CD Integration**: GitHub Actions builds and pushes the actual application image
+5. **Automatic Updates**: Lambda function gets updated with new images via CI/CD
+
+### **No Scripts Required:**
+
+- ✅ **Infrastructure**: Pure Terraform modules
+- ✅ **Deployment**: GitHub Actions with Terraform commands
+- ✅ **Container Management**: ECR lifecycle policies via Terraform
+- ✅ **Lambda Updates**: AWS CLI commands in GitHub Actions
+- ✅ **State Management**: Uses existing S3 bucket with file-based locking
+
+## Environment Configuration
+
+### Development Environment
+- **Purpose**: Development and testing
+- **VPC CIDR**: 10.0.0.0/16
+- **State Key**: `usecase6/dev/terraform.tfstate`
+- **Resources**: Minimal configuration for cost optimization
+
+### Staging Environment
+- **Purpose**: Pre-production testing
+- **VPC CIDR**: 10.1.0.0/16
+- **State Key**: `usecase6/staging/terraform.tfstate`
+- **Resources**: Production-like configuration
+
+### Production Environment
+- **Purpose**: Live production workloads
+- **VPC CIDR**: 10.2.0.0/16
+- **State Key**: `usecase6/prod/terraform.tfstate`
+- **Resources**: High availability and performance
+
+## API Usage
+
+Once deployed, the API Gateway provides endpoints to access your Lambda function:
+
+```bash
+# Get the API Gateway URL from Terraform output
+curl https://<api-id>.execute-api.ap-south-1.amazonaws.com/dev/
+
+# Example response
+{
+  "message": "Hello World from Lambda Container!",
+  "environment": "dev",
+  "timestamp": "2024-01-01T12:00:00.000Z",
+  "requestId": "abc123",
+  "path": "/",
+  "httpMethod": "GET"
+}
+```
+
+## Monitoring and Logging
+
+### CloudWatch Logs
+- Lambda execution logs: `/aws/lambda/{function-name}`
+- API Gateway logs: Available in the API Gateway console
+
+### CloudWatch Metrics
+- Lambda duration and error rates
+- API Gateway request metrics
+- Custom alarms for monitoring
+
+### X-Ray Tracing
+- Distributed tracing enabled for Lambda functions
+- View request traces in the X-Ray console
+
+## Security Features
+
+### Network Security
+- VPC with private subnets for Lambda
+- Security groups with minimal required access
+- NAT Gateways for outbound internet access
+
+### IAM Security
+- Least privilege IAM roles
+- Function-specific execution roles
+- Resource-based policies
+
+### Data Security
+- S3 state encryption
+- ECR image scanning
+- VPC endpoints for AWS services (optional)
+
+## Troubleshooting
 
 ### Common Issues
 
-1. **ECR Repository Not Found**
-   ```
-   Error: Source image does not exist
-   ```
-   **Solution**: Run "Setup ECR Repository" workflow first
+1. **Lambda Function Not Updating**:
+   - Check if ECR image exists and is accessible
+   - Verify IAM permissions for Lambda service
+   - Check VPC configuration and security groups
 
-2. **Lambda Function Not Found**
-   ```
-   Error: Lambda function does not exist
-   ```
-   **Solution**: Run "Deploy Infrastructure" workflow first
+2. **API Gateway 5xx Errors**:
+   - Check Lambda function logs in CloudWatch
+   - Verify Lambda function is in running state
+   - Check API Gateway integration configuration
 
-3. **OIDC Authentication Issues**
-   - Verify OIDC provider configuration in AWS
-   - Check IAM role trust policy
-   - Ensure correct role ARN in workflows
-
-4. **Terraform State Issues**
-   - Verify S3 bucket access permissions
-   - Check state file path and region
-
-5. **Stuck Resources**
-   - Use "Emergency Cleanup" workflow
-   - Check AWS console for manual cleanup needs
-
-### Deployment Order
-
-Always follow this order:
-1. **Setup ECR Repository** (once per environment)
-2. **Deploy Infrastructure** (when infrastructure changes)
-3. **Build and Deploy Application** (for code updates)
-
-### Cleanup Order
-
-For complete environment removal:
-1. **Cleanup Environment** (complete-cleanup option)
-2. **Emergency Cleanup** (if regular cleanup fails)
-3. **Manual verification** in AWS console
+3. **Terraform State Lock Issues**:
+   - File-based locking automatically handles conflicts
+   - If lock file gets stuck, check S3 bucket for `.tflock` files
+   - Use `terraform force-unlock` if necessary (with caution)
 
 ### Useful Commands
 
 ```bash
-# Check Lambda logs
-aws logs tail /aws/lambda/hello-world-lambda-dev-app --follow --region ap-south-1
+# Check Lambda function status
+aws lambda get-function --function-name hello-world-lambda-dev
+
+# View Lambda logs
+aws logs tail /aws/lambda/hello-world-lambda-dev --follow
+
+# Test Lambda function locally
+aws lambda invoke --function-name hello-world-lambda-dev response.json
 
 # List ECR images
-aws ecr list-images --repository-name hello-world-lambda-dev-app --region ap-south-1
+aws ecr list-images --repository-name hello-world-lambda-dev
 
-# Test API Gateway
-curl -X GET https://your-api-gateway-url.amazonaws.com/
-
-# Check Lambda function
-aws lambda get-function --function-name hello-world-lambda-dev-app --region ap-south-1
-
-# List all resources for cleanup verification
-aws lambda list-functions --query "Functions[?contains(FunctionName, 'hello-world-lambda-dev')]"
-aws apigatewayv2 get-apis --query "Items[?contains(Name, 'hello-world-lambda-dev')]"
-aws ecr describe-repositories --query "repositories[?contains(repositoryName, 'hello-world-lambda-dev')]"
+# Check for stuck lock files
+aws s3 ls s3://usecases-terraform-state-bucket/usecase6/ --recursive | grep .tflock
 ```
 
-## 📈 Monitoring & Alerts
+## Workflow Commands
 
-### Key Metrics Monitored
-- Lambda function errors and duration
-- API Gateway latency and error rates
-- ECR image vulnerabilities
-- Cost optimization opportunities
+### Deploy Infrastructure
+```bash
+# Via GitHub Actions
+Actions → Terraform Infrastructure → Run workflow → Select environment → Apply
 
-### Automated Alerts
-- High error rates (>5 errors in 5 minutes)
-- High latency (>10 seconds average)
-- Failed deployments
-
-## 🔄 Complete Workflow Lifecycle
-
-### 🚀 Setup (First Time)
-```
-1. Setup ECR Repository → 2. Deploy Infrastructure → 3. Build and Deploy
+# Via Local Terraform
+cd terraform
+terraform init -backend-config=environments/dev/backend.tf
+terraform apply -var-file=environments/dev/terraform.tfvars
 ```
 
-### 🔄 Development Cycle
-```
-Code Changes → Push to Branch → Auto Build and Deploy
-```
+### Build and Deploy Application
+```bash
+# Via GitHub Actions (automatic on push to main)
+git push origin main
 
-### 🧹 Cleanup
-```
-Cleanup Environment (infrastructure-only) → Redeploy Infrastructure → Continue Development
-```
-
-### 🗑️ Complete Removal
-```
-Cleanup Environment (complete-cleanup) → Verify in AWS Console → Done
+# Manual trigger
+Actions → Build and Push Docker Image → Run workflow → Select environment
 ```
 
-### 🚨 Emergency
+### Destroy Infrastructure
+```bash
+# Via GitHub Actions
+Actions → Terraform Infrastructure → Run workflow → Select environment → Destroy
+
+# Via Local Terraform
+cd terraform
+terraform destroy -var-file=environments/dev/terraform.tfvars
 ```
-Emergency Cleanup → Manual Verification → Regular Cleanup (if needed)
+
+## State Management Details
+
+### Backend Configuration
+
+The project uses your existing state bucket with file-based locking:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket        = "usecases-terraform-state-bucket"
+    key           = "usecase6/statefile.tfstate"
+    region        = "ap-south-1"
+    encrypt       = true
+    use_lockfile  = true
+  }
+}
 ```
 
-## 📚 Additional Resources
+### Environment Separation
 
-- [AWS Lambda Container Images](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
-- [GitHub OIDC with AWS](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)
-- [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
+Each environment maintains its own state file:
+- **Dev**: `usecase6/dev/terraform.tfstate`
+- **Staging**: `usecase6/staging/terraform.tfstate`
+- **Prod**: `usecase6/prod/terraform.tfstate`
 
-## 🤝 Contributing
+### Lock File Management
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+Terraform automatically creates and manages lock files in S3:
+- **Lock Files**: `usecase6/{environment}/terraform.tfstate.tflock`
+- **Automatic Cleanup**: Terraform removes lock files after operations
+- **Conflict Prevention**: Multiple users cannot modify state simultaneously
 
-## 📄 License
+## Cost Optimization
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+- Use appropriate Lambda memory settings
+- Implement lifecycle policies for ECR images
+- Use CloudWatch log retention policies
+- Consider using Lambda provisioned concurrency for production
+
+## Contributing
+
+1. Create a feature branch
+2. Make your changes
+3. Run Terraform format and validate
+4. Create a pull request
+5. Review and merge after approval
+
+**Note**: File-based locking automatically prevents concurrent modifications to state files.
+
+## Support
+
+For issues and questions:
+1. Check the troubleshooting section
+2. Review CloudWatch logs
+3. Create an issue in the repository
+4. Contact the DevOps team
+
+---
+
+This infrastructure demonstrates production-ready practices for containerized Lambda deployment with proper security, monitoring, and CI/CD integration using pure Terraform and GitHub Actions - leveraging your existing state management infrastructure with file-based locking for safe concurrent operations.

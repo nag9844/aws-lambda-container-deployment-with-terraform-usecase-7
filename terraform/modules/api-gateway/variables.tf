@@ -24,3 +24,12 @@ variable "lambda_function_name" {
     error_message = "Lambda function name cannot be empty."
   }
 }
+
+variable "lambda_invoke_arn" {
+  description = "Lambda function invoke ARN"
+  type        = string
+  validation {
+    condition     = can(regex("^arn:aws:apigateway:[a-z0-9-]+:lambda:path/2015-03-31/functions/arn:aws:lambda:[a-z0-9-]+:[0-9]+:function:[a-zA-Z0-9-_]+/invocations$", var.lambda_invoke_arn))
+    error_message = "Lambda invoke ARN must be a valid API Gateway Lambda invoke ARN."
+  }
+}

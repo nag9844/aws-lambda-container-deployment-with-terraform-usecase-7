@@ -1,0 +1,70 @@
+name: 'Deploy Lambda Function'
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Lambda
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ap-south-1
+
+    - name: Update Lambda function with latest image
+      env:
+        FUNCTION_NAME: hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}
+      run: |
+        # Get the latest image from ECR
+        ECR_REPO="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.ap-south-1.amazonaws.com/${ECR_REPO}:latest"
+        
+        # Update Lambda function
+        aws lambda update-function-code \
+          --function-name $FUNCTION_NAME \
+          --image-uri $IMAGE_URI \
+          --region ap-south-1
+
+    - name: Wait for function update to complete
+      env:
+        FUNCTION_NAME: hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}
+      run: |
+        aws lambda wait function-updated \
+          --function-name $FUNCTION_NAME \
+          --region ap-south-1
+
+    - name: Test Lambda function
+      env:
+        FUNCTION_NAME: hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}
+      run: |
+        aws lambda invoke \
+          --function-name $FUNCTION_NAME \
+          --region ap-south-1 \
+          --payload '{"httpMethod":"GET","path":"/"}' \
+          response.json
+        
+        cat response.json
