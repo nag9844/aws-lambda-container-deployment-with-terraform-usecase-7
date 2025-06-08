@@ -9,8 +9,15 @@ variable "environment" {
 }
 
 variable "image_uri" {
-  description = "URI of the container image in ECR"
+  description = "URI of the container image in ECR (optional)"
   type        = string
+  default     = ""
+}
+
+variable "force_container_mode" {
+  description = "Force container deployment mode (requires valid image_uri)"
+  type        = bool
+  default     = false
 }
 
 variable "timeout" {

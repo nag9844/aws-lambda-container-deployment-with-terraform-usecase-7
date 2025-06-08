@@ -38,14 +38,14 @@ output "monitoring_dashboard_url" {
   value       = module.monitoring.dashboard_url
 }
 
-output "container_image_available" {
-  description = "Whether container image is available in ECR"
-  value       = module.lambda.container_image_available
+output "deployment_type" {
+  description = "Type of Lambda deployment (zip or container)"
+  value       = module.lambda.deployment_type
 }
 
-output "deployment_type" {
-  description = "Type of Lambda deployment (placeholder or container)"
-  value       = module.lambda.deployment_type
+output "package_type" {
+  description = "Package type of the Lambda function"
+  value       = module.lambda.package_type
 }
 
 # Output summary for easy access
@@ -57,7 +57,7 @@ output "deployment_summary" {
     lambda_function_url   = module.lambda.function_url
     ecr_repository_url    = data.aws_ecr_repository.main.repository_url
     dashboard_url         = module.monitoring.dashboard_url
-    container_image_ready = module.lambda.container_image_available
     deployment_type       = module.lambda.deployment_type
+    package_type          = module.lambda.package_type
   }
 }

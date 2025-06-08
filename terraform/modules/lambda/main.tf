@@ -1,52 +1,7 @@
-# Lambda Module - Create Lambda function with container image or placeholder
+# Lambda Module - Create Lambda function with ZIP deployment first, then upgrade to container
 
-# Check if ECR repository has valid images using external data source
-data "external" "ecr_images" {
-  program = ["bash", "-c", <<-EOT
-    set -e
-    
-    # Extract repository name and region from image URI
-    if [[ "${var.image_uri}" =~ ([0-9]+)\.dkr\.ecr\.([^.]+)\.amazonaws\.com/([^:]+):(.+) ]]; then
-      ACCOUNT_ID="$${BASH_REMATCH[1]}"
-      REGION="$${BASH_REMATCH[2]}"
-      REPO_NAME="$${BASH_REMATCH[3]}"
-      TAG="$${BASH_REMATCH[4]}"
-    else
-      echo '{"has_images": "false", "error": "invalid_uri_format"}' >&2
-      echo '{"has_images": "false", "error": "invalid_uri_format"}'
-      exit 0
-    fi
-    
-    # Check if repository exists and has the specific tag
-    if aws ecr describe-images \
-        --repository-name "$REPO_NAME" \
-        --image-ids imageTag="$TAG" \
-        --region "$REGION" \
-        --query 'imageDetails[0].imageTags' \
-        --output text >/dev/null 2>&1; then
-      echo '{"has_images": "true", "repo_name": "'$REPO_NAME'", "tag": "'$TAG'"}'
-    else
-      # Check if repository has any images at all
-      IMAGE_COUNT=$(aws ecr list-images \
-        --repository-name "$REPO_NAME" \
-        --region "$REGION" \
-        --query 'length(imageIds)' \
-        --output text 2>/dev/null || echo "0")
-      
-      if [ "$IMAGE_COUNT" -gt 0 ]; then
-        echo '{"has_images": "false", "reason": "tag_not_found", "repo_name": "'$REPO_NAME'", "tag": "'$TAG'"}'
-      else
-        echo '{"has_images": "false", "reason": "no_images", "repo_name": "'$REPO_NAME'", "tag": "'$TAG'"}'
-      fi
-    fi
-  EOT
-  ]
-}
-
-# Create placeholder zip file for initial deployment
+# Create placeholder zip file for deployment
 data "archive_file" "placeholder" {
-  count = data.external.ecr_images.result.has_images == "false" ? 1 : 0
-  
   type        = "zip"
   output_path = "${path.module}/placeholder.zip"
   
@@ -67,13 +22,13 @@ def lambda_handler(event, context):
     
     # Create response body
     response_body = {
-        "message": "Hello World from Placeholder Lambda!",
-        "status": "Container image will be deployed when available",
+        "message": "Hello World from AWS Lambda!",
+        "status": "Ready for container deployment",
         "method": http_method,
         "path": path,
         "environment": os.environ.get('ENVIRONMENT', 'unknown'),
         "function_name": context.function_name if context else 'unknown',
-        "deployment_type": "placeholder"
+        "deployment_type": "zip_placeholder"
     }
     
     # Add query parameters if present
@@ -86,12 +41,12 @@ def lambda_handler(event, context):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Placeholder Lambda</title>
+            <title>AWS Lambda Function</title>
             <style>
                 body {{ 
                     font-family: Arial, sans-serif; 
                     margin: 40px; 
-                    background: linear-gradient(135deg, #ff9a56 0%, #ff6b6b 100%);
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     color: white;
                 }}
                 .container {{ 
@@ -111,32 +66,34 @@ def lambda_handler(event, context):
                 }}
                 .highlight {{ color: #ffd700; font-weight: bold; }}
                 .status {{ 
-                    background: rgba(255,165,0,0.3); 
+                    background: rgba(0,255,0,0.2); 
                     padding: 10px; 
                     border-radius: 5px; 
                     margin: 15px 0;
-                    border-left: 4px solid #ffa500;
+                    border-left: 4px solid #00ff00;
                 }}
             </style>
         </head>
         <body>
             <div class="container">
-                <h1 class="header">🚧 Placeholder Lambda Function</h1>
+                <h1 class="header">🚀 AWS Lambda Function</h1>
                 <div class="status">
-                    <p><strong>Status:</strong> Container image deployment pending</p>
+                    <p><strong>Status:</strong> Function deployed and ready!</p>
                 </div>
                 <div class="info">
                     <p><span class="highlight">Function:</span> {context.function_name if context else 'unknown'}</p>
                     <p><span class="highlight">Environment:</span> {os.environ.get('ENVIRONMENT', 'unknown')}</p>
                     <p><span class="highlight">Method:</span> {http_method}</p>
                     <p><span class="highlight">Path:</span> {path}</p>
+                    <p><span class="highlight">Deployment:</span> ZIP Package (ready for container upgrade)</p>
                 </div>
-                <p>This is a temporary placeholder function. The containerized application will be deployed automatically when the Docker image is available in ECR.</p>
+                <p>This Lambda function is deployed and working! It can be upgraded to use a container image when available.</p>
                 <ul>
-                    <li>⏳ Waiting for container image</li>
+                    <li>✅ Function deployed successfully</li>
                     <li>✅ API Gateway configured</li>
                     <li>✅ Monitoring enabled</li>
                     <li>✅ Infrastructure ready</li>
+                    <li>🔄 Ready for container upgrade</li>
                 </ul>
             </div>
         </body>
@@ -170,24 +127,24 @@ EOF
   }
 }
 
-# Lambda function - handles both placeholder and container deployments
+# Lambda function - starts with ZIP, can be upgraded to container later
 resource "aws_lambda_function" "main" {
   function_name = "${var.project_name}-${var.environment}"
   role          = aws_iam_role.lambda_execution.arn
   timeout       = var.timeout
   memory_size   = var.memory_size
 
-  # Use container image if available, otherwise use placeholder
-  package_type = data.external.ecr_images.result.has_images == "true" ? "Image" : "Zip"
+  # Always start with ZIP deployment for reliability
+  package_type     = var.force_container_mode && var.image_uri != "" ? "Image" : "Zip"
   
-  # Container configuration (only when images are available)
-  image_uri = data.external.ecr_images.result.has_images == "true" ? var.image_uri : null
+  # Container configuration (only when forced and image URI provided)
+  image_uri = var.force_container_mode && var.image_uri != "" ? var.image_uri : null
   
-  # Zip configuration for placeholder (only when no images)
-  filename         = data.external.ecr_images.result.has_images == "false" ? data.archive_file.placeholder[0].output_path : null
-  source_code_hash = data.external.ecr_images.result.has_images == "false" ? data.archive_file.placeholder[0].output_base64sha256 : null
-  handler          = data.external.ecr_images.result.has_images == "false" ? "index.lambda_handler" : null
-  runtime          = data.external.ecr_images.result.has_images == "false" ? "python3.11" : null
+  # ZIP configuration (default)
+  filename         = var.force_container_mode && var.image_uri != "" ? null : data.archive_file.placeholder.output_path
+  source_code_hash = var.force_container_mode && var.image_uri != "" ? null : data.archive_file.placeholder.output_base64sha256
+  handler          = var.force_container_mode && var.image_uri != "" ? null : "index.lambda_handler"
+  runtime          = var.force_container_mode && var.image_uri != "" ? null : "python3.11"
 
   dynamic "vpc_config" {
     for_each = var.vpc_config != null ? [var.vpc_config] : []
@@ -215,8 +172,8 @@ resource "aws_lambda_function" "main" {
     Name           = "${var.project_name}-lambda-${var.environment}"
     Environment    = var.environment
     Project        = var.project_name
-    DeploymentType = data.external.ecr_images.result.has_images == "true" ? "container" : "placeholder"
-    ImageStatus    = data.external.ecr_images.result.has_images == "true" ? "available" : lookup(data.external.ecr_images.result, "reason", "checking")
+    DeploymentType = var.force_container_mode && var.image_uri != "" ? "container" : "zip"
+    PackageType    = var.force_container_mode && var.image_uri != "" ? "Image" : "Zip"
   }
 
   depends_on = [
@@ -227,7 +184,7 @@ resource "aws_lambda_function" "main" {
 
   lifecycle {
     ignore_changes = [
-      # Allow updates to switch from placeholder to container
+      # Allow updates to switch from ZIP to container
       package_type,
       image_uri,
       filename,

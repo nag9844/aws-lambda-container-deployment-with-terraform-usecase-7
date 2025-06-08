@@ -44,17 +44,16 @@ output "log_group_arn" {
 }
 
 output "deployment_type" {
-  description = "Type of deployment (container or placeholder)"
-  value       = data.external.ecr_images.result.has_images == "true" ? "container" : "placeholder"
+  description = "Type of deployment (container or zip)"
+  value       = var.force_container_mode && var.image_uri != "" ? "container" : "zip"
+}
+
+output "package_type" {
+  description = "Package type of the Lambda function"
+  value       = aws_lambda_function.main.package_type
 }
 
 output "container_image_available" {
-  description = "Whether container image is available"
-  value       = data.external.ecr_images.result.has_images == "true"
-}
-
-output "image_check_result" {
-  description = "Result of the ECR image check"
-  value       = data.external.ecr_images.result
-  sensitive   = false
+  description = "Whether container image is being used"
+  value       = var.force_container_mode && var.image_uri != ""
 }
