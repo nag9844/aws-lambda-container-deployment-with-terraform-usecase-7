@@ -1,23 +1,18 @@
-# Lambda Module - Create Lambda function with smart deployment mode detection
+# Lambda Module - Create Lambda function with ZIP deployment
 
-# Lambda function - automatically detects deployment mode
+# Lambda function with ZIP deployment
 resource "aws_lambda_function" "main" {
   function_name = "${var.project_name}-${var.environment}"
   role          = aws_iam_role.lambda_execution.arn
+  package_type  = "Zip"
   timeout       = var.timeout
   memory_size   = var.memory_size
 
-  # Smart deployment mode detection
-  package_type = var.force_container_mode && var.image_uri != "" ? "Image" : "Zip"
-  
-  # Container image URI (when using container mode)
-  image_uri = var.force_container_mode && var.image_uri != "" ? var.image_uri : null
-  
-  # ZIP deployment (when not using container mode or no image available)
-  filename         = var.force_container_mode && var.image_uri != "" ? null : data.archive_file.placeholder[0].output_path
-  source_code_hash = var.force_container_mode && var.image_uri != "" ? null : data.archive_file.placeholder[0].output_base64sha256
-  handler          = var.force_container_mode && var.image_uri != "" ? null : "index.lambda_handler"
-  runtime          = var.force_container_mode && var.image_uri != "" ? null : "python3.11"
+  # ZIP deployment configuration
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  handler          = "app.lambda_handler"
+  runtime          = "python3.11"
 
   dynamic "vpc_config" {
     for_each = var.vpc_config != null ? [var.vpc_config] : []
@@ -45,8 +40,8 @@ resource "aws_lambda_function" "main" {
     Name           = "${var.project_name}-lambda-${var.environment}"
     Environment    = var.environment
     Project        = var.project_name
-    DeploymentType = var.force_container_mode && var.image_uri != "" ? "container" : "zip"
-    PackageType    = var.force_container_mode && var.image_uri != "" ? "Image" : "Zip"
+    DeploymentType = "zip"
+    PackageType    = "Zip"
   }
 
   depends_on = [
@@ -54,52 +49,17 @@ resource "aws_lambda_function" "main" {
     aws_iam_role_policy_attachment.lambda_vpc_access,
     aws_cloudwatch_log_group.lambda
   ]
-
-  lifecycle {
-    # Allow updates to switch from ZIP to container
-    ignore_changes = []
-  }
 }
 
-# Create placeholder zip file for initial deployment
-resource "local_file" "placeholder_zip" {
-  count = var.force_container_mode && var.image_uri != "" ? 0 : 1
-  
-  content = <<EOF
-import sys
-
-def lambda_handler(event, context):
-    """
-    Simple AWS Lambda handler that returns plain text Hello World
-    """
-    return {
-        'statusCode': 200,
-        'headers': {
-            'Content-Type': 'text/plain',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
-        },
-        'body': 'Hello World'
-    }
-EOF
-  
-  filename = "${path.module}/placeholder.py"
-}
-
-# Create zip archive for placeholder
-data "archive_file" "placeholder" {
-  count = var.force_container_mode && var.image_uri != "" ? 0 : 1
-  
+# Create Lambda deployment package from source code
+data "archive_file" "lambda_zip" {
   type        = "zip"
-  output_path = "${path.module}/placeholder.zip"
+  output_path = "${path.module}/lambda_function.zip"
   
   source {
-    content  = local_file.placeholder_zip[0].content
-    filename = "index.py"
+    content = file("${path.root}/../../src/app.py")
+    filename = "app.py"
   }
-  
-  depends_on = [local_file.placeholder_zip]
 }
 
 # CloudWatch Log Group

@@ -33,8 +33,6 @@ provider "aws" {
 # Local variables
 locals {
   environment = "dev"
-  # Start with ZIP deployment, will be upgraded to container via CI/CD
-  use_container_deployment = false
 }
 
 # Data sources
@@ -58,18 +56,14 @@ module "vpc" {
   enable_flow_logs   = false  # Disabled for dev to save costs
 }
 
-# Lambda Module (created first)
+# Lambda Module (ZIP deployment)
 module "lambda" {
   source = "../../modules/lambda"
 
   project_name = var.project_name
   environment  = local.environment
-  image_uri    = var.lambda_image_uri
   timeout      = 30
   memory_size  = 256
-
-  # Use container mode only if image URI is provided
-  force_container_mode = var.lambda_image_uri != ""
 
   environment_variables = {
     ENVIRONMENT = local.environment
@@ -90,13 +84,13 @@ module "lambda" {
   log_retention_days = 7  # Shorter retention for dev
 }
 
-# API Gateway Module (created after Lambda to use proper invoke ARN)
+# API Gateway Module
 module "api_gateway" {
   source = "../../modules/api-gateway"
 
   project_name      = var.project_name
   environment       = local.environment
-  lambda_invoke_arn = module.lambda.function_invoke_arn  # Use actual invoke ARN
+  lambda_invoke_arn = module.lambda.function_invoke_arn
   stage_name        = "dev"
   
   enable_access_logs = true
@@ -107,7 +101,7 @@ module "api_gateway" {
   depends_on = [module.lambda]
 }
 
-# Lambda permission for API Gateway (separate resource)
+# Lambda permission for API Gateway
 resource "aws_lambda_permission" "api_gateway_invoke" {
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"

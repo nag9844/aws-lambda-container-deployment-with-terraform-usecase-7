@@ -39,13 +39,13 @@ output "monitoring_dashboard_url" {
 }
 
 output "deployment_type" {
-  description = "Type of Lambda deployment (zip or container)"
-  value       = module.lambda.deployment_type
+  description = "Type of Lambda deployment (always zip)"
+  value       = "zip"
 }
 
 output "package_type" {
   description = "Package type of the Lambda function"
-  value       = module.lambda.package_type
+  value       = "Zip"
 }
 
 # Output summary for easy access
@@ -57,7 +57,7 @@ output "deployment_summary" {
     lambda_function_url   = module.lambda.function_url
     ecr_repository_url    = data.aws_ecr_repository.main.repository_url
     dashboard_url         = module.monitoring.dashboard_url
-    deployment_type       = module.lambda.deployment_type
-    package_type          = module.lambda.package_type
+    deployment_type       = "zip"
+    package_type          = "Zip"
   }
 }

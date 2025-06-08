@@ -21,15 +21,3 @@ variable "az_count" {
   type        = number
   default     = 2
 }
-
-variable "lambda_image_uri" {
-  description = "URI of the Lambda container image"
-  type        = string
-  default     = ""
-}
-
-variable "force_container_deployment" {
-  description = "Force container deployment mode"
-  type        = bool
-  default     = false
-}

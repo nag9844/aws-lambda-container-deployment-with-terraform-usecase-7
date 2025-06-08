@@ -44,16 +44,11 @@ output "log_group_arn" {
 }
 
 output "deployment_type" {
-  description = "Type of deployment (container or zip)"
-  value       = var.force_container_mode && var.image_uri != "" ? "container" : "zip"
+  description = "Type of deployment (always zip for this module)"
+  value       = "zip"
 }
 
 output "package_type" {
   description = "Package type of the Lambda function"
   value       = aws_lambda_function.main.package_type
-}
-
-output "container_image_available" {
-  description = "Whether container image is being used"
-  value       = var.force_container_mode && var.image_uri != ""
 }

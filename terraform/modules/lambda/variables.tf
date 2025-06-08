@@ -8,18 +8,6 @@ variable "environment" {
   type        = string
 }
 
-variable "image_uri" {
-  description = "URI of the container image in ECR (optional)"
-  type        = string
-  default     = ""
-}
-
-variable "force_container_mode" {
-  description = "Force container deployment mode (requires valid image_uri)"
-  type        = bool
-  default     = false
-}
-
 variable "timeout" {
   description = "The amount of time your Lambda Function has to run in seconds"
   type        = number
