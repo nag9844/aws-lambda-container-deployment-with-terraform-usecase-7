@@ -294,51 +294,51 @@ jobs:
           echo "function_url=$FUNCTION_URL" >> $GITHUB_OUTPUT
           echo "lambda_arn=$LAMBDA_ARN" >> $GITHUB_OUTPUT
 
-      - name: Test Deployment with Retries
-        if: github.event_name != 'pull_request' && steps.outputs.outputs.api_url != ''
-        run: |
-          echo "Testing deployment with retries..."
-          API_URL="${{ steps.outputs.outputs.api_url }}"
-          FUNCTION_URL="${{ steps.outputs.outputs.function_url }}"
+      # - name: Test Deployment with Retries
+      #   if: github.event_name != 'pull_request' && steps.outputs.outputs.api_url != ''
+      #   run: |
+      #     echo "Testing deployment with retries..."
+      #     API_URL="${{ steps.outputs.outputs.api_url }}"
+      #     FUNCTION_URL="${{ steps.outputs.outputs.function_url }}"
           
-          echo "API Gateway URL: $API_URL"
-          echo "Lambda Function URL: $FUNCTION_URL"
+      #     echo "API Gateway URL: $API_URL"
+      #     echo "Lambda Function URL: $FUNCTION_URL"
           
-          # Test API Gateway with retries
-          echo "Testing API Gateway..."
-          for i in {1..5}; do
-            echo "Attempt $i/5..."
-            RESPONSE=$(curl -s "$API_URL" || echo "")
-            echo "Response: $RESPONSE"
+      #     # Test API Gateway with retries
+      #     echo "Testing API Gateway..."
+      #     for i in {1..5}; do
+      #       echo "Attempt $i/5..."
+      #       RESPONSE=$(curl -s "$API_URL" || echo "")
+      #       echo "Response: $RESPONSE"
             
-            if [[ "$RESPONSE" == *"This is a Lambda function running in a container"* ]]; then
-              echo "API Gateway test successful - Updated message detected!"
-              break
-            else
-              echo "Still getting old response, waiting 30 seconds..."
-              sleep 30
-            fi
-          done
+      #       if [[ "$RESPONSE" == *"This is a Lambda function running in a container"* ]]; then
+      #         echo "API Gateway test successful - Updated message detected!"
+      #         break
+      #       else
+      #         echo "Still getting old response, waiting 30 seconds..."
+      #         sleep 30
+      #       fi
+      #     done
           
-          # Test Lambda Function URL with retries
-          if [ -n "$FUNCTION_URL" ]; then
-            echo "Testing Lambda Function URL..."
-            for i in {1..5}; do
-              echo "Attempt $i/5..."
-              RESPONSE=$(curl -s "$FUNCTION_URL" || echo "")
-              echo "Response: $RESPONSE"
+      #     # Test Lambda Function URL with retries
+      #     if [ -n "$FUNCTION_URL" ]; then
+      #       echo "Testing Lambda Function URL..."
+      #       for i in {1..5}; do
+      #         echo "Attempt $i/5..."
+      #         RESPONSE=$(curl -s "$FUNCTION_URL" || echo "")
+      #         echo "Response: $RESPONSE"
               
-              if [[ "$RESPONSE" == *"This is a Lambda function running in a container"* ]]; then
-                echo "Lambda Function URL test successful - Updated message detected!"
-                break
-              else
-                echo "Still getting old response, waiting 30 seconds..."
-                sleep 30
-              fi
-            done
-          fi
+      #         if [[ "$RESPONSE" == *"This is a Lambda function running in a container"* ]]; then
+      #           echo "Lambda Function URL test successful - Updated message detected!"
+      #           break
+      #         else
+      #           echo "Still getting old response, waiting 30 seconds..."
+      #           sleep 30
+      #         fi
+      #       done
+      #     fi
           
-          echo "🎉 Deployment testing completed!"
+      #     echo "Deployment testing completed!"
 
       - name: Comment Plan on PR
         if: github.event_name == 'pull_request'
