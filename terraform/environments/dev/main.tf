@@ -66,6 +66,9 @@ module "lambda" {
   timeout      = 30
   memory_size  = 256
 
+  # Force container mode if image URI is provided or explicitly requested
+  force_container_mode = var.force_container_deployment || var.lambda_image_uri != ""
+
   environment_variables = {
     ENVIRONMENT = local.environment
     LOG_LEVEL   = "DEBUG"

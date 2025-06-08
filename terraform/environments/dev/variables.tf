@@ -7,7 +7,7 @@ variable "project_name" {
 variable "aws_region" {
   description = "AWS region"
   type        = string
-  default     = "ap-south-1"
+  default     = "us-east-1"
 }
 
 variable "vpc_cidr" {
@@ -28,26 +28,8 @@ variable "lambda_image_uri" {
   default     = ""
 }
 
-variable "private_subnet_cidrs" {
-  description = "CIDR blocks for private subnets (optional, will be calculated if not provided)"
-  type        = list(string)
-  default     = []
-}
-variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets (optional, will be calculated if not provided)"
-  type        = list(string)
-  default     = []
-}
-
-variable "enable_vpc_config" {
-  description = "Enable VPC configuration for Lambda"
+variable "force_container_deployment" {
+  description = "Force container deployment mode"
   type        = bool
-  default     = true
-}
-
-variable "environment" {
-  description = "Environment name"
-  type        = string
-  default     = ""
-  
+  default     = false
 }
