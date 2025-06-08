@@ -7,10 +7,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    archive = {
-      source  = "hashicorp/archive"
-      version = "~> 2.0"
-    }
   }
 
   backend "s3" {
@@ -48,144 +44,6 @@ data "aws_ecr_repository" "main" {
   name = "${var.project_name}-${local.environment}"
 }
 
-# Check if ECR repository has images using external data source
-data "external" "ecr_images" {
-  program = ["bash", "-c", <<-EOT
-    set -e
-    REPO_NAME="${var.project_name}-${local.environment}"
-    REGION="${var.aws_region}"
-    
-    # Try to list images and check if any exist
-    IMAGE_COUNT=$(aws ecr list-images --repository-name "$REPO_NAME" --region "$REGION" --query 'length(imageIds)' --output text 2>/dev/null || echo "0")
-    
-    if [ "$IMAGE_COUNT" -gt 0 ]; then
-      echo '{"has_images": "true"}'
-    else
-      echo '{"has_images": "false"}'
-    fi
-  EOT
-  ]
-}
-
-# Create a placeholder Lambda function with a simple Python runtime first
-# This will be used when no container image is available
-resource "aws_lambda_function" "placeholder" {
-  count = data.external.ecr_images.result.has_images == "false" ? 1 : 0
-  
-  function_name = "${var.project_name}-${local.environment}"
-  role          = aws_iam_role.lambda_execution.arn
-  handler       = "index.handler"
-  runtime       = "python3.11"
-  timeout       = 30
-  memory_size   = 256
-
-  filename         = "placeholder.zip"
-  source_code_hash = data.archive_file.placeholder[0].output_base64sha256
-
-  environment {
-    variables = {
-      ENVIRONMENT = local.environment
-      LOG_LEVEL   = "DEBUG"
-    }
-  }
-
-  tags = {
-    Name        = "${var.project_name}-lambda-${local.environment}"
-    Environment = local.environment
-    Project     = var.project_name
-  }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.lambda_basic_execution,
-    aws_cloudwatch_log_group.lambda
-  ]
-
-  lifecycle {
-    ignore_changes = [
-      filename,
-      source_code_hash,
-      handler,
-      runtime,
-      package_type,
-      image_uri
-    ]
-  }
-}
-
-# Create placeholder zip file for initial deployment
-data "archive_file" "placeholder" {
-  count = data.external.ecr_images.result.has_images == "false" ? 1 : 0
-  
-  type        = "zip"
-  output_path = "placeholder.zip"
-  
-  source {
-    content = <<EOF
-import json
-
-def handler(event, context):
-    return {
-        'statusCode': 200,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
-        },
-        'body': json.dumps({
-            'message': 'Hello from placeholder Lambda function!',
-            'status': 'Container image will be deployed when available',
-            'environment': '${local.environment}',
-            'function_name': context.function_name if context else 'unknown'
-        })
-    }
-EOF
-    filename = "index.py"
-  }
-}
-
-# IAM role for Lambda execution (shared between placeholder and container function)
-resource "aws_iam_role" "lambda_execution" {
-  name = "${var.project_name}-lambda-execution-role-${local.environment}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        }
-      }
-    ]
-  })
-
-  tags = {
-    Name        = "${var.project_name}-lambda-role-${local.environment}"
-    Environment = local.environment
-    Project     = var.project_name
-  }
-}
-
-# IAM policy attachment for basic Lambda execution
-resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-  role       = aws_iam_role.lambda_execution.name
-}
-
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "lambda" {
-  name              = "/aws/lambda/${var.project_name}-${local.environment}"
-  retention_in_days = 7
-
-  tags = {
-    Name        = "${var.project_name}-lambda-logs-${local.environment}"
-    Environment = local.environment
-    Project     = var.project_name
-  }
-}
-
 # VPC Module
 module "vpc" {
   source = "../../modules/vpc"
@@ -198,10 +56,8 @@ module "vpc" {
   enable_flow_logs   = false  # Disabled for dev to save costs
 }
 
-# Lambda Module (only if container image exists)
+# Lambda Module
 module "lambda" {
-  count = data.external.ecr_images.result.has_images == "true" ? 1 : 0
-  
   source = "../../modules/lambda"
 
   project_name = var.project_name
@@ -229,22 +85,13 @@ module "lambda" {
   log_retention_days = 7  # Shorter retention for dev
 }
 
-# Lambda permission for API Gateway
-resource "aws_lambda_permission" "api_gateway" {
-  statement_id  = "AllowExecutionFromAPIGateway"
-  action        = "lambda:InvokeFunction"
-  function_name = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_name : aws_lambda_function.placeholder[0].function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${module.api_gateway.execution_arn}/*/*"
-}
-
 # API Gateway Module
 module "api_gateway" {
   source = "../../modules/api-gateway"
 
   project_name      = var.project_name
   environment       = local.environment
-  lambda_invoke_arn = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_invoke_arn : aws_lambda_function.placeholder[0].invoke_arn
+  lambda_invoke_arn = module.lambda.function_invoke_arn
   stage_name        = "dev"
   
   enable_access_logs = true
@@ -260,7 +107,7 @@ module "monitoring" {
   project_name         = var.project_name
   environment          = local.environment
   aws_region          = var.aws_region
-  lambda_function_name = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_name : aws_lambda_function.placeholder[0].function_name
+  lambda_function_name = module.lambda.function_name
   api_gateway_name     = "${var.project_name}-api-${local.environment}"
   
   # More lenient thresholds for dev

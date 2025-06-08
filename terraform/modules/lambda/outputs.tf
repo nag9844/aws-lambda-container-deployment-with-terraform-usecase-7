@@ -42,3 +42,13 @@ output "log_group_arn" {
   description = "ARN of the CloudWatch log group"
   value       = aws_cloudwatch_log_group.lambda.arn
 }
+
+output "deployment_type" {
+  description = "Type of deployment (container or placeholder)"
+  value       = data.external.ecr_images.result.has_images == "true" ? "container" : "placeholder"
+}
+
+output "container_image_available" {
+  description = "Whether container image is available"
+  value       = data.external.ecr_images.result.has_images == "true"
+}

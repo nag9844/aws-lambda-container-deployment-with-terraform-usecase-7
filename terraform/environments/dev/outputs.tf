@@ -10,17 +10,17 @@ output "ecr_repository_url" {
 
 output "lambda_function_arn" {
   description = "ARN of the Lambda function"
-  value       = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_arn : aws_lambda_function.placeholder[0].arn
+  value       = module.lambda.function_arn
 }
 
 output "lambda_function_name" {
   description = "Name of the Lambda function"
-  value       = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_name : aws_lambda_function.placeholder[0].function_name
+  value       = module.lambda.function_name
 }
 
 output "lambda_function_url" {
   description = "Function URL of the Lambda function"
-  value       = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_url : null
+  value       = module.lambda.function_url
 }
 
 output "api_gateway_url" {
@@ -40,12 +40,12 @@ output "monitoring_dashboard_url" {
 
 output "container_image_available" {
   description = "Whether container image is available in ECR"
-  value       = data.external.ecr_images.result.has_images == "true"
+  value       = module.lambda.container_image_available
 }
 
 output "deployment_type" {
   description = "Type of Lambda deployment (placeholder or container)"
-  value       = data.external.ecr_images.result.has_images == "true" ? "container" : "placeholder"
+  value       = module.lambda.deployment_type
 }
 
 # Output summary for easy access
@@ -54,10 +54,10 @@ output "deployment_summary" {
   value = {
     environment            = "dev"
     api_gateway_url       = module.api_gateway.api_url
-    lambda_function_url   = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_url : null
+    lambda_function_url   = module.lambda.function_url
     ecr_repository_url    = data.aws_ecr_repository.main.repository_url
     dashboard_url         = module.monitoring.dashboard_url
-    container_image_ready = data.external.ecr_images.result.has_images == "true"
-    deployment_type       = data.external.ecr_images.result.has_images == "true" ? "container" : "placeholder"
+    container_image_ready = module.lambda.container_image_available
+    deployment_type       = module.lambda.deployment_type
   }
 }
