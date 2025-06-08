@@ -104,7 +104,7 @@ jobs:
           # Scan the image
           trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
 
-      - name: Update Lambda function
+      - name: Update Lambda function (Container Mode)
         if: github.event_name != 'pull_request'
         run: |
           FUNCTION_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
@@ -113,17 +113,52 @@ jobs:
           echo "Updating Lambda function: $FUNCTION_NAME"
           echo "With image: $IMAGE_URI"
           
-          aws lambda update-function-code \
-            --function-name $FUNCTION_NAME \
-            --image-uri $IMAGE_URI \
-            --region ${{ env.AWS_REGION }}
+          # Check current function configuration
+          CURRENT_PACKAGE_TYPE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.PackageType' --output text)
+          echo "Current package type: $CURRENT_PACKAGE_TYPE"
+          
+          if [ "$CURRENT_PACKAGE_TYPE" = "Zip" ]; then
+            echo "Converting function from ZIP to Image package type..."
+            
+            # First, update the function configuration to use Image package type
+            aws lambda update-function-configuration \
+              --function-name $FUNCTION_NAME \
+              --package-type Image \
+              --region ${{ env.AWS_REGION }}
+            
+            # Wait for the configuration update to complete
+            echo "Waiting for configuration update to complete..."
+            aws lambda wait function-updated \
+              --function-name $FUNCTION_NAME \
+              --region ${{ env.AWS_REGION }}
+            
+            # Now update the function code with the image URI
+            aws lambda update-function-code \
+              --function-name $FUNCTION_NAME \
+              --image-uri $IMAGE_URI \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "Function is already using Image package type, updating code..."
+            # Function is already using Image package type, just update the code
+            aws lambda update-function-code \
+              --function-name $FUNCTION_NAME \
+              --image-uri $IMAGE_URI \
+              --region ${{ env.AWS_REGION }}
+          fi
           
           # Wait for the update to complete
+          echo "Waiting for function update to complete..."
           aws lambda wait function-updated \
             --function-name $FUNCTION_NAME \
             --region ${{ env.AWS_REGION }}
           
           echo "Lambda function updated successfully"
+          
+          # Verify the update
+          UPDATED_PACKAGE_TYPE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.PackageType' --output text)
+          UPDATED_IMAGE_URI=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Code.ImageUri' --output text)
+          echo "Updated package type: $UPDATED_PACKAGE_TYPE"
+          echo "Updated image URI: $UPDATED_IMAGE_URI"
 
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}

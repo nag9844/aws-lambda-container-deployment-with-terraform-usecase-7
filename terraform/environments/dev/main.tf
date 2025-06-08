@@ -10,10 +10,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket       = "usecases-terraform-state-bucket"
-    key          = "usecase7/dev/statefile.tfstate"
-    region       = "ap-south-1"
-    encrypt      = true
+    # Backend configuration is provided via CLI or backend config file
     use_lockfile = true
   }
 }
@@ -33,6 +30,8 @@ provider "aws" {
 # Local variables
 locals {
   environment = "dev"
+  # Force container deployment for dev environment
+  use_container_deployment = true
 }
 
 # Data sources
@@ -66,8 +65,8 @@ module "lambda" {
   timeout      = 30
   memory_size  = 256
 
-  # Force container mode if image URI is provided or explicitly requested
-  force_container_mode = var.force_container_deployment || var.lambda_image_uri != ""
+  # Force container mode for dev environment
+  force_container_mode = local.use_container_deployment
 
   environment_variables = {
     ENVIRONMENT = local.environment
