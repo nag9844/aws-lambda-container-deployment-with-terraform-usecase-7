@@ -45,12 +45,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
           role-session-name: GitHubActions-Build-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
+      
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -63,7 +64,20 @@ jobs:
           REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
           ECR_URI=$(aws ecr describe-repositories --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
           echo "ecr_uri=$ECR_URI" >> $GITHUB_OUTPUT
-          echo "ECR Repository URI: $ECR_URI"
+          echo "📦 ECR Repository URI: $ECR_URI"
+
+      - name: Verify ECR Repository Exists
+        run: |
+          REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
+          echo "🔍 Verifying ECR repository exists..."
+          
+          if aws ecr describe-repositories --repository-names $REPO_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "✅ ECR repository '$REPO_NAME' exists"
+          else
+            echo "❌ ECR repository '$REPO_NAME' does not exist!"
+            echo "Please run the ECR workflow first to create the repository"
+            exit 1
+          fi
 
       - name: Extract metadata
         id: meta
@@ -80,7 +94,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push Docker image
+      - name: Build Docker image locally first
+        run: |
+          echo "🔨 Building Docker image locally for validation..."
+          cd src
+          docker build -t test-lambda-image .
+          echo "✅ Local build successful"
+
+      - name: Test Docker image locally
+        run: |
+          echo "🧪 Testing Docker image locally..."
+          
+          # Test that the image can run
+          docker run --rm test-lambda-image python -c "import app; print('✅ App module imports successfully')"
+          
+          # Test that boto3 is available
+          docker run --rm test-lambda-image python -c "import boto3; print('✅ boto3 is available')"
+          
+          echo "✅ Local image tests passed"
+
+      - name: Build and push Docker image to ECR
         uses: docker/build-push-action@v5
         with:
           context: ./src
@@ -92,9 +125,30 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
+      - name: Verify image was pushed successfully
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "🔍 Verifying image was pushed to ECR..."
+          IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
+          
+          # Wait a moment for ECR to register the image
+          sleep 10
+          
+          # Check if image exists in ECR
+          if aws ecr describe-images --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --image-ids imageTag="${{ github.event.inputs.image_tag || 'latest' }}" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "✅ Image successfully pushed to ECR: $IMAGE_URI"
+          else
+            echo "❌ Image not found in ECR after push!"
+            echo "Listing all images in repository:"
+            aws ecr list-images --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --region ${{ env.AWS_REGION }}
+            exit 1
+          fi
+
       - name: Image vulnerability scan
         if: github.event_name != 'pull_request'
         run: |
+          echo "🔒 Running security scan on Docker image..."
+          
           # Install Trivy
           sudo apt-get update
           sudo apt-get install wget apt-transport-https gnupg lsb-release
@@ -104,7 +158,9 @@ jobs:
           sudo apt-get install trivy
           
           # Scan the image
-          trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
+          IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
+          echo "🔍 Scanning image: $IMAGE_URI"
+          trivy image --exit-code 0 --severity HIGH,CRITICAL $IMAGE_URI
 
       - name: Update Lambda Function with New Image
         if: github.event_name != 'pull_request'
@@ -144,16 +200,18 @@ jobs:
           # Function to wait for function update
           wait_for_update() {
             echo "⏳ Waiting for function update to complete..."
-            local max_attempts=20
+            local max_attempts=30
             local attempt=1
             
             while [ $attempt -le $max_attempts ]; do
-              STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.State' --output text --region ${{ env.AWS_REGION }})
-              if [ "$STATUS" = "Active" ]; then
-                echo "✅ Function is now active after $attempt attempts"
+              STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.State' --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "NotFound")
+              LAST_UPDATE_STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.LastUpdateStatus' --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Unknown")
+              
+              if [ "$STATUS" = "Active" ] && [ "$LAST_UPDATE_STATUS" = "Successful" ]; then
+                echo "✅ Function is now active and update successful after $attempt attempts"
                 return 0
               fi
-              echo "🔄 Attempt $attempt/$max_attempts: Function status is $STATUS, waiting..."
+              echo "🔄 Attempt $attempt/$max_attempts: Function status is $STATUS, update status is $LAST_UPDATE_STATUS, waiting..."
               sleep 10
               attempt=$((attempt + 1))
             done
