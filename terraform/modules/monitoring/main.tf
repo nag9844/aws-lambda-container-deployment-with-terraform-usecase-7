@@ -274,28 +274,6 @@ resource "aws_sns_topic_subscription" "slack_alerts" {
   endpoint  = var.slack_webhook_url
 }
 
-# CloudWatch Composite Alarm for overall health
-resource "aws_cloudwatch_composite_alarm" "overall_health" {
-  count      = var.create_composite_alarm ? 1 : 0
-  alarm_name = "${var.project_name}-${var.environment}-overall-health"
-
-  alarm_rule = join(" OR ", [
-    "ALARM(${aws_cloudwatch_metric_alarm.lambda_errors.alarm_name})",
-    "ALARM(${aws_cloudwatch_metric_alarm.lambda_duration.alarm_name})",
-    "ALARM(${aws_cloudwatch_metric_alarm.api_gateway_4xx.alarm_name})",
-    "ALARM(${aws_cloudwatch_metric_alarm.api_gateway_5xx.alarm_name})"
-  ])
-
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
-
-  tags = {
-    Name        = "${var.project_name}-overall-health-${var.environment}"
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
 # CloudWatch Log Metric Filter for custom metrics
 resource "aws_cloudwatch_log_metric_filter" "custom_metrics" {
   for_each = var.custom_log_metric_filters
