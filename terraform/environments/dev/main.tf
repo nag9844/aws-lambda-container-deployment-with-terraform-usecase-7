@@ -56,6 +56,21 @@ module "vpc" {
   enable_flow_logs   = false  # Disabled for dev to save costs
 }
 
+# API Gateway Module (must be created before Lambda for permissions)
+module "api_gateway" {
+  source = "../../modules/api-gateway"
+
+  project_name      = var.project_name
+  environment       = local.environment
+  lambda_invoke_arn = "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}-${local.environment}"
+  stage_name        = "dev"
+  
+  enable_access_logs = true
+  log_retention_days = 7  # Shorter retention for dev
+  enable_metrics     = true
+  logging_level      = "INFO"
+}
+
 # Lambda Module
 module "lambda" {
   source = "../../modules/lambda"
@@ -83,21 +98,11 @@ module "lambda" {
   }
 
   log_retention_days = 7  # Shorter retention for dev
-}
-
-# API Gateway Module
-module "api_gateway" {
-  source = "../../modules/api-gateway"
-
-  project_name      = var.project_name
-  environment       = local.environment
-  lambda_invoke_arn = module.lambda.function_invoke_arn
-  stage_name        = "dev"
   
-  enable_access_logs = true
-  log_retention_days = 7  # Shorter retention for dev
-  enable_metrics     = true
-  logging_level      = "INFO"
+  # CRITICAL: Pass API Gateway execution ARN for permissions
+  api_gateway_execution_arn = module.api_gateway.execution_arn
+
+  depends_on = [module.api_gateway]
 }
 
 # Monitoring Module

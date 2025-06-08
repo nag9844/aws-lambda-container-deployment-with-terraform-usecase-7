@@ -272,14 +272,26 @@ resource "aws_lambda_function_url" "main" {
   }
 }
 
-# Lambda permission for API Gateway (if api_gateway_arn is provided)
-resource "aws_lambda_permission" "api_gateway" {
-  count         = var.api_gateway_arn != null ? 1 : 0
+# Lambda permission for API Gateway - CRITICAL FIX
+resource "aws_lambda_permission" "api_gateway_invoke" {
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.main.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${var.api_gateway_arn}/*/*"
+  
+  # Allow all API Gateway executions for this function
+  source_arn = "${var.api_gateway_execution_arn}/*/*"
+}
+
+# Additional permission for API Gateway root resource
+resource "aws_lambda_permission" "api_gateway_invoke_root" {
+  statement_id  = "AllowExecutionFromAPIGatewayRoot"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.main.function_name
+  principal     = "apigateway.amazonaws.com"
+  
+  # Allow API Gateway to invoke for root path
+  source_arn = "${var.api_gateway_execution_arn}/*"
 }
 
 # Lambda alias for versioning

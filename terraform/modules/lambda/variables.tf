@@ -94,8 +94,8 @@ variable "function_url_cors" {
   default = null
 }
 
-variable "api_gateway_arn" {
-  description = "ARN of the API Gateway to allow invocation from"
+variable "api_gateway_execution_arn" {
+  description = "Execution ARN of the API Gateway to allow invocation from"
   type        = string
   default     = null
 }
