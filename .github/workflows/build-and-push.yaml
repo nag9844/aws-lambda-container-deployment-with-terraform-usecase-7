@@ -44,7 +44,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -177,14 +177,16 @@ jobs:
               TIMEOUT=$(echo $CURRENT_CONFIG | jq -r '.Timeout')
               MEMORY_SIZE=$(echo $CURRENT_CONFIG | jq -r '.MemorySize')
               
-              # Extract environment variables and convert to proper format
-              ENV_VARS_JSON=$(echo $CURRENT_CONFIG | jq -c '.Environment.Variables // {}')
+              # Extract environment variables and save to file
+              echo "💾 Extracting environment variables..."
+              echo $CURRENT_CONFIG | jq -c '.Environment.Variables // {}' > /tmp/env_vars.json
+              ENV_VARS_CONTENT=$(cat /tmp/env_vars.json)
               
               echo "💾 Backing up current function configuration..."
               echo "🔑 Role: $ROLE_ARN"
               echo "⏱️ Timeout: $TIMEOUT"
               echo "💾 Memory: $MEMORY_SIZE"
-              echo "🌍 Environment Variables: $ENV_VARS_JSON"
+              echo "🌍 Environment Variables: $ENV_VARS_CONTENT"
               
               # Delete the existing function
               echo "🗑️ Deleting existing ZIP-based function..."
@@ -198,7 +200,7 @@ jobs:
               
               # Create new container-based function with proper environment variables
               echo "🆕 Creating new container-based function..."
-              if [ "$ENV_VARS_JSON" = "{}" ] || [ "$ENV_VARS_JSON" = "null" ]; then
+              if [ "$ENV_VARS_CONTENT" = "{}" ] || [ "$ENV_VARS_CONTENT" = "null" ]; then
                 # No environment variables
                 echo "📝 Creating function without environment variables..."
                 aws lambda create-function \
@@ -210,9 +212,18 @@ jobs:
                   --memory-size $MEMORY_SIZE \
                   --region ${{ env.AWS_REGION }}
               else
-                # With environment variables - write to file first to avoid shell parsing issues
+                # With environment variables - use file-based approach
                 echo "📝 Creating function with environment variables..."
-                echo "$ENV_VARS_JSON" > /tmp/env_vars.json
+                
+                # Create environment variables in the correct format for AWS CLI
+                cat > /tmp/env_config.json << EOF
+          {
+            "Variables": $(cat /tmp/env_vars.json)
+          }
+          EOF
+                
+                echo "📄 Environment config file content:"
+                cat /tmp/env_config.json
                 
                 aws lambda create-function \
                   --function-name $FUNCTION_NAME \
@@ -221,7 +232,7 @@ jobs:
                   --package-type Image \
                   --timeout $TIMEOUT \
                   --memory-size $MEMORY_SIZE \
-                  --environment file:///tmp/env_vars.json \
+                  --environment file:///tmp/env_config.json \
                   --region ${{ env.AWS_REGION }}
               fi
               
