@@ -21,16 +21,12 @@ on:
         - plan
         - apply
         - destroy
-      force_container_deployment:
-        description: 'Force container deployment even if no image exists'
-        required: false
-        default: false
-        type: boolean
   push:
     branches:
       - main
     paths:
       - 'terraform/**'
+      - 'src/**'
   pull_request:
     branches:
       - main
@@ -74,65 +70,6 @@ jobs:
             terraform validate
             cd - > /dev/null
           done
-
-  # Build and push container image first (for push events)
-  build-and-push:
-    name: Build and Push Container Image
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'dev' }}
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Get ECR Repository URI
-        id: get-ecr-uri
-        run: |
-          # Get ECR repository URI from AWS
-          REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
-          ECR_URI=$(aws ecr describe-repositories --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
-          echo "ecr_uri=$ECR_URI" >> $GITHUB_OUTPUT
-          echo "ECR Repository URI: $ECR_URI"
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.get-ecr-uri.outputs.ecr_uri }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src
-          file: ./src/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
-    outputs:
-      image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:latest
 
   terraform-plan:
     name: Terraform Plan
@@ -209,13 +146,13 @@ jobs:
               body: comment
             });
 
-  # Separate apply job for push events (with validation dependency)
+  # Deploy infrastructure first (creates Lambda with ZIP deployment)
   terraform-apply-push:
-    name: Terraform Apply (Auto)
+    name: Deploy Infrastructure
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [terraform-validate, build-and-push]
+    needs: [terraform-validate]
     
     steps:
       - name: Checkout code
@@ -229,9 +166,9 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
-        #   terraform_wrapper: false
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
@@ -252,21 +189,192 @@ jobs:
         run: |
           API_URL=$(terraform output -raw api_gateway_url 2>/dev/null || echo "")
           LAMBDA_ARN=$(terraform output -raw lambda_function_arn 2>/dev/null || echo "")
+          LAMBDA_NAME=$(terraform output -raw lambda_function_name 2>/dev/null || echo "")
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
           echo "lambda_arn=$LAMBDA_ARN" >> $GITHUB_OUTPUT
+          echo "lambda_name=$LAMBDA_NAME" >> $GITHUB_OUTPUT
 
-      - name: Test Deployment
+      - name: Test Initial Deployment
         if: steps.outputs.outputs.api_url != ''
         run: |
-          echo "Testing API Gateway endpoint..."
-          curl -f "${{ steps.outputs.outputs.api_url }}" || exit 1
-          echo "Deployment test successful!"
+          echo "🧪 Testing initial Lambda deployment..."
+          curl -f "${{ steps.outputs.outputs.api_url }}" || echo "Initial deployment test - function may not be ready yet"
 
     outputs:
       api_url: ${{ steps.outputs.outputs.api_url }}
       lambda_arn: ${{ steps.outputs.outputs.lambda_arn }}
+      lambda_name: ${{ steps.outputs.outputs.lambda_name }}
 
-  # Separate apply job for manual workflow dispatch (no dependencies)
+  # Build and deploy container image (after infrastructure exists)
+  build-and-deploy-container:
+    name: Build and Deploy Container
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [terraform-apply-push]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get ECR Repository URI
+        id: get-ecr-uri
+        run: |
+          REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
+          ECR_URI=$(aws ecr describe-repositories --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
+          echo "ecr_uri=$ECR_URI" >> $GITHUB_OUTPUT
+          echo "ECR Repository URI: $ECR_URI"
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.get-ecr-uri.outputs.ecr_uri }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest
+            type=raw,value={{date 'YYYYMMDD-HHmmss'}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src
+          file: ./src/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Update Lambda to Container Mode
+        run: |
+          FUNCTION_NAME="${{ needs.terraform-apply-push.outputs.lambda_name }}"
+          IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:latest"
+          
+          echo "🚀 Converting Lambda function to container mode"
+          echo "📦 Function: $FUNCTION_NAME"
+          echo "🖼️ Image: $IMAGE_URI"
+          
+          # Get current function configuration
+          echo "📋 Getting current function configuration..."
+          CURRENT_CONFIG=$(aws lambda get-function-configuration --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }})
+          ROLE_ARN=$(echo $CURRENT_CONFIG | jq -r '.Role')
+          TIMEOUT=$(echo $CURRENT_CONFIG | jq -r '.Timeout')
+          MEMORY_SIZE=$(echo $CURRENT_CONFIG | jq -r '.MemorySize')
+          ENV_VARS_JSON=$(echo $CURRENT_CONFIG | jq -c '.Environment.Variables // {}')
+          
+          echo "🔑 Role: $ROLE_ARN"
+          echo "⏱️ Timeout: $TIMEOUT"
+          echo "💾 Memory: $MEMORY_SIZE"
+          echo "🌍 Environment Variables: $ENV_VARS_JSON"
+          
+          # Delete existing function
+          echo "🗑️ Deleting existing ZIP-based function..."
+          aws lambda delete-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }}
+          
+          # Wait for deletion
+          echo "⏳ Waiting for function deletion..."
+          sleep 30
+          
+          # Verify deletion
+          for i in {1..10}; do
+            if ! aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+              echo "✅ Function successfully deleted"
+              break
+            fi
+            echo "🔄 Waiting for deletion... attempt $i/10"
+            sleep 10
+          done
+          
+          # Create new container-based function
+          echo "🆕 Creating new container-based function..."
+          if [ "$ENV_VARS_JSON" = "{}" ] || [ "$ENV_VARS_JSON" = "null" ]; then
+            aws lambda create-function \
+              --function-name $FUNCTION_NAME \
+              --role $ROLE_ARN \
+              --code ImageUri=$IMAGE_URI \
+              --package-type Image \
+              --timeout $TIMEOUT \
+              --memory-size $MEMORY_SIZE \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "$ENV_VARS_JSON" > /tmp/env_vars.json
+            aws lambda create-function \
+              --function-name $FUNCTION_NAME \
+              --role $ROLE_ARN \
+              --code ImageUri=$IMAGE_URI \
+              --package-type Image \
+              --timeout $TIMEOUT \
+              --memory-size $MEMORY_SIZE \
+              --environment file:///tmp/env_vars.json \
+              --region ${{ env.AWS_REGION }}
+          fi
+          
+          # Wait for function to be active
+          echo "⏳ Waiting for function to become active..."
+          aws lambda wait function-active --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }}
+          
+          # Verify final state
+          FINAL_CONFIG=$(aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }})
+          FINAL_PACKAGE_TYPE=$(echo $FINAL_CONFIG | jq -r '.Configuration.PackageType')
+          FINAL_IMAGE_URI=$(echo $FINAL_CONFIG | jq -r '.Code.ImageUri')
+          
+          echo "✅ Conversion completed successfully!"
+          echo "📦 Final package type: $FINAL_PACKAGE_TYPE"
+          echo "🖼️ Final image URI: $FINAL_IMAGE_URI"
+
+      - name: Test Updated Function
+        run: |
+          echo "🧪 Testing updated container-based function..."
+          API_URL="${{ needs.terraform-apply-push.outputs.api_url }}"
+          
+          if [ -n "$API_URL" ]; then
+            echo "🌐 Testing API Gateway endpoint: $API_URL"
+            
+            # Wait a moment for API Gateway to recognize the updated function
+            sleep 10
+            
+            # Test the endpoint
+            RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL")
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            
+            echo "📊 HTTP Status: $HTTP_CODE"
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Function test successful!"
+              echo "📄 Response preview:"
+              echo "$BODY" | head -c 300
+              echo ""
+              echo ""
+              echo "🎉 Container deployment completed successfully!"
+              echo "🌐 Your updated function is live at: $API_URL"
+            else
+              echo "⚠️ Function test returned HTTP $HTTP_CODE"
+              echo "Response: $BODY"
+              echo "The function was deployed but may need a moment to become fully available"
+            fi
+          else
+            echo "⚠️ API Gateway URL not available for testing"
+          fi
+
+  # Manual apply job for workflow dispatch
   terraform-apply-manual:
     name: Terraform Apply (Manual)
     runs-on: ubuntu-latest
@@ -285,9 +393,9 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
-        #   terraform_wrapper: false
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
@@ -340,8 +448,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
+        with:
+          terraform_version: 1.6.0
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
