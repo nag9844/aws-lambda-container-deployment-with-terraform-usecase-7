@@ -223,5 +223,3 @@ gh workflow run build-deploy.yml -f environment=dev -f image_tag=v1.0.0
 # 3. Test your deployment
 curl https://YOUR_API_GATEWAY_URL/dev
 ```
-
-That's it! Your containerized Lambda application is now deployed! 🚀
