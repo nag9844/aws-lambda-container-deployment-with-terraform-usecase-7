@@ -102,6 +102,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+          provenance: false
+          sbom: false
 
       - name: Image vulnerability scan
         if: github.event_name != 'pull_request'
@@ -117,13 +119,14 @@ jobs:
           # Scan the image
           trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
 
-      - name: Verify image exists and inspect
+      - name: Verify image compatibility for Lambda
         if: github.event_name != 'pull_request'
         run: |
           # Wait a moment for image to be available
-          sleep 10
+          sleep 15
           
           # Verify the image exists in ECR
+          echo "Verifying image exists in ECR..."
           aws ecr describe-images \
             --repository-name hello-world-lambda-${{ github.event.inputs.environment || 'dev' }} \
             --image-ids imageTag=${{ github.event.inputs.image_tag || 'latest' }} \
@@ -137,15 +140,19 @@ jobs:
             --query 'imageDetails[0]' --output json)
           
           echo "Image Details:"
-          echo "$IMAGE_DETAILS"
+          echo "$IMAGE_DETAILS" | jq '.'
           
-          # Check image manifest
-          MANIFEST=$(aws ecr get-download-url-for-layer \
-            --repository-name hello-world-lambda-${{ github.event.inputs.environment || 'dev' }} \
-            --layer-digest $(echo "$IMAGE_DETAILS" | jq -r '.imageManifest | fromjson | .layers[0].digest') \
-            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Could not get manifest")
+          # Check image architecture
+          ARCHITECTURE=$(echo "$IMAGE_DETAILS" | jq -r '.imageManifest | fromjson | .architecture // "unknown"')
+          echo "Image Architecture: $ARCHITECTURE"
           
-          echo "Image is ready for Lambda deployment"
+          # Verify it's amd64
+          if [ "$ARCHITECTURE" != "amd64" ] && [ "$ARCHITECTURE" != "unknown" ]; then
+            echo "ERROR: Image architecture is $ARCHITECTURE, but Lambda requires amd64"
+            exit 1
+          fi
+          
+          echo "✅ Image is ready for Lambda deployment"
 
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
@@ -171,7 +178,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.12.0
+          terraform_version: 1.6.0
           terraform_wrapper: false
 
       - name: Terraform Init
