@@ -1,0 +1,5 @@
+# Copy this file to terraform.tfvars and customize as needed
+
+project_name = "hello-world-lambda"
+environment  = "dev"
+aws_region   = "ap-south-1"

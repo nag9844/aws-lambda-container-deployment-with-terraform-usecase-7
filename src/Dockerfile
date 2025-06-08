@@ -2,11 +2,11 @@
 FROM public.ecr.aws/lambda/python:3.11
 
 # Set working directory
-WORKDIR /var/task
+WORKDIR ${LAMBDA_TASK_ROOT}
 
-# Copy requirements if you have any (create empty for now)
-# COPY requirements.txt .
-# RUN pip install -r requirements.txt
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app.py ${LAMBDA_TASK_ROOT}

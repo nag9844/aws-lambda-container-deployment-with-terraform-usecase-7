@@ -1,4 +1,5 @@
 # Development Environment Configuration
+# Deploy this AFTER ECR repository is created and Docker image is pushed
 
 terraform {
   required_version = ">= 1.0"
@@ -11,7 +12,7 @@ terraform {
 
   backend "s3" {
     bucket       = "usecases-terraform-state-bucket"
-    key          = "usecase7/dev/statefile.tfstate"
+    key          = "usecase6/dev/terraform.tfstate"
     region       = "ap-south-1"
     encrypt      = true
     use_lockfile = true
@@ -39,9 +40,15 @@ locals {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
-# Data source to get existing ECR repository (created by ECR workflow)
+# Data source to get existing ECR repository (created separately)
 data "aws_ecr_repository" "main" {
   name = "${var.project_name}-${local.environment}"
+}
+
+# Check if image exists in ECR
+data "aws_ecr_image" "lambda_image" {
+  repository_name = data.aws_ecr_repository.main.name
+  image_tag       = var.image_tag
 }
 
 # VPC Module
@@ -62,7 +69,7 @@ module "lambda" {
 
   project_name = var.project_name
   environment  = local.environment
-  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : "${data.aws_ecr_repository.main.repository_url}:latest"
+  image_uri    = "${data.aws_ecr_repository.main.repository_url}:${var.image_tag}"
   timeout      = 30
   memory_size  = 256
 
@@ -83,6 +90,9 @@ module "lambda" {
   }
 
   log_retention_days = 7  # Shorter retention for dev
+
+  # Ensure ECR image exists before creating Lambda
+  depends_on = [data.aws_ecr_image.lambda_image]
 }
 
 # API Gateway Module

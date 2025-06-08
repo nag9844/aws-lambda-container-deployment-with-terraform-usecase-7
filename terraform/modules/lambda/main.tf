@@ -31,6 +31,17 @@ resource "aws_lambda_function" "main" {
     }
   }
 
+  # Enable X-Ray tracing if specified
+  dynamic "tracing_config" {
+    for_each = var.enable_xray_tracing ? [1] : []
+    content {
+      mode = "Active"
+    }
+  }
+
+  # Reserved concurrency
+  reserved_concurrent_executions = var.reserved_concurrent_executions
+
   tags = {
     Name        = "${var.project_name}-lambda-${var.environment}"
     Environment = var.environment
@@ -40,6 +51,7 @@ resource "aws_lambda_function" "main" {
   depends_on = [
     aws_iam_role_policy_attachment.lambda_basic_execution,
     aws_iam_role_policy_attachment.lambda_vpc_access,
+    aws_iam_role_policy_attachment.lambda_xray_access,
     aws_cloudwatch_log_group.lambda
   ]
 }
@@ -48,6 +60,7 @@ resource "aws_lambda_function" "main" {
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.project_name}-${var.environment}"
   retention_in_days = var.log_retention_days
+  kms_key_id        = var.log_kms_key_id
 
   tags = {
     Name        = "${var.project_name}-lambda-logs-${var.environment}"
@@ -90,6 +103,13 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
 resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
   count      = var.vpc_config != null ? 1 : 0
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+  role       = aws_iam_role.lambda_execution.name
+}
+
+# IAM policy attachment for X-Ray tracing
+resource "aws_iam_role_policy_attachment" "lambda_xray_access" {
+  count      = var.enable_xray_tracing ? 1 : 0
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
   role       = aws_iam_role.lambda_execution.name
 }
 
@@ -138,4 +158,41 @@ resource "aws_lambda_alias" "main" {
   description      = "Alias for ${var.project_name} Lambda function"
   function_name    = aws_lambda_function.main.function_name
   function_version = var.function_version
+
+  dynamic "routing_config" {
+    for_each = var.alias_routing_config != null ? [var.alias_routing_config] : []
+    content {
+      additional_version_weights = routing_config.value.additional_version_weights
+    }
+  }
+}
+
+# Lambda provisioned concurrency (if specified)
+resource "aws_lambda_provisioned_concurrency_config" "main" {
+  count                             = var.provisioned_concurrency_config != null ? 1 : 0
+  function_name                     = aws_lambda_function.main.function_name
+  provisioned_concurrent_executions = var.provisioned_concurrency_config.provisioned_concurrent_executions
+  qualifier                         = var.provisioned_concurrency_config.qualifier
+}
+
+# Lambda event source mapping (for SQS, Kinesis, etc.)
+resource "aws_lambda_event_source_mapping" "main" {
+  for_each = var.event_source_mappings
+
+  event_source_arn  = each.value.event_source_arn
+  function_name     = aws_lambda_function.main.arn
+  starting_position = each.value.starting_position
+  batch_size        = each.value.batch_size
+
+  dynamic "filter_criteria" {
+    for_each = each.value.filter_criteria != null ? [each.value.filter_criteria] : []
+    content {
+      dynamic "filter" {
+        for_each = filter_criteria.value.filters
+        content {
+          pattern = filter.value.pattern
+        }
+      }
+    }
+  }
 }

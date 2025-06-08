@@ -14,6 +14,11 @@ This guide walks you through setting up the AWS Lambda container DevOps solution
 - GitHub repository with this code
 - GitHub Secrets and Variables configured
 
+### 3. S3 Bucket for Terraform State
+- S3 bucket: `usecases-terraform-state-bucket`
+- Bucket should exist in `ap-south-1` region
+- Versioning enabled for state file protection
+
 ## GitHub OIDC Configuration
 
 ### Step 1: Create AWS Identity Provider
@@ -75,18 +80,25 @@ cat > terraform-state-policy.json << EOF
         "s3:ListBucket"
       ],
       "Resource": [
-        "arn:aws:s3:::YOUR-TERRAFORM-STATE-BUCKET",
-        "arn:aws:s3:::YOUR-TERRAFORM-STATE-BUCKET/*"
+        "arn:aws:s3:::usecases-terraform-state-bucket",
+        "arn:aws:s3:::usecases-terraform-state-bucket/*"
       ]
     },
     {
       "Effect": "Allow",
       "Action": [
-        "dynamodb:GetItem",
-        "dynamodb:PutItem",
-        "dynamodb:DeleteItem"
+        "iam:PassRole"
       ],
-      "Resource": "arn:aws:dynamodb:*:*:table/YOUR-TERRAFORM-LOCK-TABLE"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": [
+            "lambda.amazonaws.com",
+            "apigateway.amazonaws.com",
+            "logs.amazonaws.com"
+          ]
+        }
+      }
     }
   ]
 }
@@ -98,23 +110,16 @@ aws iam put-role-policy \
   --policy-document file://terraform-state-policy.json
 ```
 
-### Step 3: Create S3 Backend and DynamoDB Table
+### Step 3: Create S3 Backend
 
 ```bash
-# Create S3 bucket for Terraform state
-aws s3 mb s3://your-terraform-state-bucket-unique-name
+# Create S3 bucket for Terraform state (if not exists)
+aws s3 mb s3://usecases-terraform-state-bucket --region ap-south-1
 
 # Enable versioning
 aws s3api put-bucket-versioning \
-  --bucket your-terraform-state-bucket-unique-name \
+  --bucket usecases-terraform-state-bucket \
   --versioning-configuration Status=Enabled
-
-# Create DynamoDB table for state locking
-aws dynamodb create-table \
-  --table-name terraform-state-lock \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST
 ```
 
 ## GitHub Repository Configuration
@@ -124,15 +129,11 @@ aws dynamodb create-table \
 **Repository Variables** (Settings > Secrets and Variables > Actions > Variables):
 ```
 AWS_ROLE_ARN: arn:aws:iam::YOUR_ACCOUNT_ID:role/GitHubActionsRole
-TERRAFORM_STATE_BUCKET: your-terraform-state-bucket-unique-name
-TERRAFORM_LOCK_TABLE: terraform-state-lock
 ```
 
 **Environment Variables** (for each environment: dev, staging, prod):
 ```
 AWS_ROLE_ARN: arn:aws:iam::YOUR_ACCOUNT_ID:role/GitHubActionsRole
-TERRAFORM_STATE_BUCKET: your-terraform-state-bucket-unique-name
-TERRAFORM_LOCK_TABLE: terraform-state-lock
 ```
 
 ## Deployment Process
@@ -142,16 +143,16 @@ TERRAFORM_LOCK_TABLE: terraform-state-lock
 1. **Create ECR Repository**:
    ```bash
    # Trigger ECR workflow manually
-   gh workflow run ecr.yml -f environment=dev
+   gh workflow run deploy-ecr.yml -f environment=dev -f action=apply
    ```
 
-2. **Build and Push Initial Image**:
+2. **Build and Deploy Everything**:
    ```bash
-   # This will fail initially but creates the repository
-   gh workflow run build-push.yml -f environment=dev -f image_tag=v1.0.0
+   # This will build image and deploy infrastructure
+   gh workflow run build-deploy.yml -f environment=dev -f image_tag=v1.0.0
    ```
 
-3. **Deploy Infrastructure**:
+3. **Deploy Infrastructure Only**:
    ```bash
    # Deploy dev environment
    gh workflow run infrastructure.yml -f environment=dev -f action=apply
@@ -220,11 +221,9 @@ Each environment gets a comprehensive dashboard showing:
    - Check Lambda function logs
    - Verify integration configuration
 
-4. **Terraform State Lock**:
-   ```bash
-   # Force unlock if necessary (use with caution)
-   terraform force-unlock LOCK_ID
-   ```
+4. **Terraform State Issues**:
+   - Ensure S3 bucket exists and is accessible
+   - Check IAM permissions for S3 access
 
 ### Useful Commands
 

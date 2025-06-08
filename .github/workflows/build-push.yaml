@@ -48,7 +48,7 @@ jobs:
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           role-session-name: GitHubActions-Build-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
@@ -114,17 +114,23 @@ jobs:
           echo "Updating Lambda function: $FUNCTION_NAME"
           echo "With image: $IMAGE_URI"
           
-          aws lambda update-function-code \
-            --function-name $FUNCTION_NAME \
-            --image-uri $IMAGE_URI \
-            --region ${{ env.AWS_REGION }}
-          
-          # Wait for the update to complete
-          aws lambda wait function-updated \
-            --function-name $FUNCTION_NAME \
-            --region ${{ env.AWS_REGION }}
-          
-          echo "Lambda function updated successfully"
+          # Check if function exists and get current config
+          if aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "Function exists, updating code..."
+            aws lambda update-function-code \
+              --function-name $FUNCTION_NAME \
+              --image-uri $IMAGE_URI \
+              --region ${{ env.AWS_REGION }}
+            
+            # Wait for the update to complete
+            aws lambda wait function-updated \
+              --function-name $FUNCTION_NAME \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "Lambda function updated successfully"
+          else
+            echo "Function does not exist yet. Will be created by Terraform."
+          fi
 
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}

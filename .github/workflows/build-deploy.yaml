@@ -1,0 +1,218 @@
+name: Build and Deploy Application
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+      image_tag:
+        description: 'Docker image tag'
+        required: false
+        default: 'latest'
+        type: string
+      skip_build:
+        description: 'Skip Docker build (use existing image)'
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+
+env:
+  AWS_REGION: ap-south-1
+  TF_VAR_aws_region: ap-south-1
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    if: github.event.inputs.skip_build != 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-Build-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get ECR Repository URI
+        id: get-ecr-uri
+        run: |
+          REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
+          if aws ecr describe-repositories --repository-names $REPO_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            ECR_URI=$(aws ecr describe-repositories --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
+            echo "ecr_uri=$ECR_URI" >> $GITHUB_OUTPUT
+            echo "ECR Repository URI: $ECR_URI"
+          else
+            echo "ECR repository $REPO_NAME does not exist. Please run ECR deployment first."
+            exit 1
+          fi
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.get-ecr-uri.outputs.ecr_uri }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=${{ github.event.inputs.image_tag || 'latest' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src
+          file: ./src/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Image vulnerability scan
+        if: github.event_name != 'pull_request'
+        run: |
+          # Install Trivy
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy
+          
+          # Scan the image
+          trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
+
+    outputs:
+      image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
+
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    needs: [build-and-push]
+    if: always() && (needs.build-and-push.result == 'success' || github.event.inputs.skip_build == 'true')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-Deploy-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: terraform init
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          terraform plan \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="image_tag=${{ github.event.inputs.image_tag || 'latest' }}" \
+            -detailed-exitcode \
+            -out=tfplan
+          echo "plan_exitcode=$?" >> $GITHUB_OUTPUT
+
+      - name: Terraform Apply
+        if: github.event_name != 'pull_request'
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: terraform apply tfplan
+
+      - name: Get Deployment Outputs
+        if: github.event_name != 'pull_request'
+        id: outputs
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          API_URL=$(terraform output -raw api_gateway_url 2>/dev/null || echo "")
+          FUNCTION_URL=$(terraform output -raw lambda_function_url 2>/dev/null || echo "")
+          LAMBDA_ARN=$(terraform output -raw lambda_function_arn 2>/dev/null || echo "")
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+          echo "function_url=$FUNCTION_URL" >> $GITHUB_OUTPUT
+          echo "lambda_arn=$LAMBDA_ARN" >> $GITHUB_OUTPUT
+
+      - name: Test Deployment
+        if: github.event_name != 'pull_request' && steps.outputs.outputs.api_url != ''
+        run: |
+          echo "Testing API Gateway endpoint..."
+          curl -f "${{ steps.outputs.outputs.api_url }}" || exit 1
+          echo "Testing Lambda Function URL..."
+          curl -f "${{ steps.outputs.outputs.function_url }}" || exit 1
+          echo "Deployment test successful!"
+
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `
+            ## Terraform Plan - ${{ github.event.inputs.environment || 'dev' }} Environment
+            
+            **Plan Status**: ${{ steps.plan.outputs.plan_exitcode == '2' && 'Changes Detected' || 'No Changes' }}
+            
+            <details>
+            <summary>Show Plan Details</summary>
+            
+            - Environment: ${{ github.event.inputs.environment || 'dev' }}
+            - Image Tag: ${{ github.event.inputs.image_tag || 'latest' }}
+            - Region: ${{ env.AWS_REGION }}
+            
+            </details>
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+    outputs:
+      api_url: ${{ steps.outputs.outputs.api_url }}
+      function_url: ${{ steps.outputs.outputs.function_url }}
+      lambda_arn: ${{ steps.outputs.outputs.lambda_arn }}

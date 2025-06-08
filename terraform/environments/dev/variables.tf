@@ -22,8 +22,8 @@ variable "az_count" {
   default     = 2
 }
 
-variable "lambda_image_uri" {
-  description = "URI of the Lambda container image"
+variable "image_tag" {
+  description = "Docker image tag to deploy"
   type        = string
-  default     = ""
+  default     = "latest"
 }

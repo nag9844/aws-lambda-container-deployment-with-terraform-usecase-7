@@ -1,6 +1,1 @@
-# Minimal requirements for AWS Lambda
-# boto3 is already included in the Lambda runtime, but we can specify version if needed
-# boto3>=1.26.0
-
-# No additional dependencies required for this simple Hello World function
-# Add dependencies here as needed for your application
+boto3==1.34.0
