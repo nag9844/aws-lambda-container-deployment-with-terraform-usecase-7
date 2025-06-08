@@ -1,16 +1,48 @@
-# ECR Module - Create ECR repository for container images
+# Standalone ECR Repository Creation
+# Deploy this first to create the ECR repository
 
+terraform {
+  required_version = ">= 1.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+
+  backend "s3" {
+    bucket       = "usecases-terraform-state-bucket"
+    key          = "usecase6/ecr/terraform.tfstate"
+    region       = "ap-south-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+
+  default_tags {
+    tags = {
+      Environment = var.environment
+      Project     = var.project_name
+      ManagedBy   = "Terraform"
+      Component   = "ECR"
+    }
+  }
+}
+
+# ECR Repository
 resource "aws_ecr_repository" "main" {
   name                 = "${var.project_name}-${var.environment}"
-  image_tag_mutability = var.image_tag_mutability
+  image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
-    scan_on_push = var.scan_on_push
+    scan_on_push = true
   }
 
   encryption_configuration {
-    encryption_type = var.encryption_type
-    kms_key         = var.kms_key_id
+    encryption_type = "AES256"
   }
 
   tags = {
@@ -18,29 +50,22 @@ resource "aws_ecr_repository" "main" {
     Environment = var.environment
     Project     = var.project_name
   }
-
-  lifecycle {
-    # Prevent destruction of repository if it contains images
-    prevent_destroy = true
-  }
 }
 
-# ECR Lifecycle Policy
+# ECR Lifecycle Policy to manage image retention
 resource "aws_ecr_lifecycle_policy" "main" {
-  count = var.enable_lifecycle_policy ? 1 : 0
-
   repository = aws_ecr_repository.main.name
 
   policy = jsonencode({
     rules = [
       {
         rulePriority = 1
-        description  = "Keep last ${var.max_image_count} images"
+        description  = "Keep last 10 tagged images"
         selection = {
           tagStatus     = "tagged"
-          tagPrefixList = ["v"]
+          tagPrefixList = ["v", "latest"]
           countType     = "imageCountMoreThan"
-          countNumber   = var.max_image_count
+          countNumber   = 10
         }
         action = {
           type = "expire"
@@ -48,12 +73,12 @@ resource "aws_ecr_lifecycle_policy" "main" {
       },
       {
         rulePriority = 2
-        description  = "Delete untagged images older than ${var.untagged_image_days} days"
+        description  = "Delete untagged images older than 7 days"
         selection = {
           tagStatus   = "untagged"
           countType   = "sinceImagePushed"
           countUnit   = "days"
-          countNumber = var.untagged_image_days
+          countNumber = 7
         }
         action = {
           type = "expire"
@@ -63,13 +88,33 @@ resource "aws_ecr_lifecycle_policy" "main" {
   })
 }
 
-# ECR Repository Policy (for cross-account access if needed)
-resource "aws_ecr_repository_policy" "main" {
-  count = var.repository_policy != "" ? 1 : 0
-
-  repository = aws_ecr_repository.main.name
-  policy     = var.repository_policy
+# Output ECR details for next steps
+output "ecr_repository_uri" {
+  description = "URI of the ECR repository"
+  value       = aws_ecr_repository.main.repository_url
 }
 
-# Output ECR login token for CI/CD
-data "aws_ecr_authorization_token" "token" {}
+output "ecr_repository_url" {
+  description = "URL of the ECR repository"
+  value       = aws_ecr_repository.main.repository_url
+}
+
+output "ecr_repository_name" {
+  description = "Name of the ECR repository"
+  value       = aws_ecr_repository.main.name
+}
+
+output "docker_login_command" {
+  description = "Command to login to ECR"
+  value       = "aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${aws_ecr_repository.main.repository_url}"
+}
+
+output "docker_build_commands" {
+  description = "Commands to build and push Docker image"
+  value = [
+    "cd src",
+    "docker build -t ${aws_ecr_repository.main.name} .",
+    "docker tag ${aws_ecr_repository.main.name}:latest ${aws_ecr_repository.main.repository_url}:latest",
+    "docker push ${aws_ecr_repository.main.repository_url}:latest"
+  ]
+}

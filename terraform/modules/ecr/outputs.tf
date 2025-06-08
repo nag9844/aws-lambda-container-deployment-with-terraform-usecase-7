@@ -9,8 +9,8 @@ output "repository_name" {
 }
 
 output "repository_uri" {
-  description = "URI of the repository"
-  value       = aws_ecr_repository.main.repository_uri
+  description = "URI of the repository (same as repository_url)"
+  value       = aws_ecr_repository.main.repository_url
 }
 
 output "registry_id" {
