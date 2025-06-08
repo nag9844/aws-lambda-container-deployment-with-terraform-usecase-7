@@ -18,7 +18,3 @@ CMD ["app.lambda_handler"]
 LABEL maintainer="DevOps Team"
 LABEL version="1.0.0"
 LABEL description="Hello World Lambda Container"
-
-# Add health check (optional, for local testing)
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import app; print('Container is healthy')" || exit 1

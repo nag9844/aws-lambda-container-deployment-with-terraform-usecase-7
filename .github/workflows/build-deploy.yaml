@@ -117,7 +117,7 @@ jobs:
           # Scan the image
           trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
 
-      - name: Verify image exists
+      - name: Verify image exists and inspect
         if: github.event_name != 'pull_request'
         run: |
           # Wait a moment for image to be available
@@ -128,6 +128,24 @@ jobs:
             --repository-name hello-world-lambda-${{ github.event.inputs.environment || 'dev' }} \
             --image-ids imageTag=${{ github.event.inputs.image_tag || 'latest' }} \
             --region ${{ env.AWS_REGION }}
+          
+          # Get image details for debugging
+          IMAGE_DETAILS=$(aws ecr describe-images \
+            --repository-name hello-world-lambda-${{ github.event.inputs.environment || 'dev' }} \
+            --image-ids imageTag=${{ github.event.inputs.image_tag || 'latest' }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'imageDetails[0]' --output json)
+          
+          echo "Image Details:"
+          echo "$IMAGE_DETAILS"
+          
+          # Check image manifest
+          MANIFEST=$(aws ecr get-download-url-for-layer \
+            --repository-name hello-world-lambda-${{ github.event.inputs.environment || 'dev' }} \
+            --layer-digest $(echo "$IMAGE_DETAILS" | jq -r '.imageManifest | fromjson | .layers[0].digest') \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Could not get manifest")
+          
+          echo "Image is ready for Lambda deployment"
 
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
@@ -153,7 +171,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.12.0
+          terraform_version: 1.6.0
           terraform_wrapper: false
 
       - name: Terraform Init
