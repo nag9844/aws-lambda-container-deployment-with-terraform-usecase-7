@@ -1,6 +1,6 @@
 import sys
 
-def handler(event, context):
+def lambda_handler(event, context):
     """
     Simple AWS Lambda handler that returns plain text Hello World
     """

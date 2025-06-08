@@ -54,8 +54,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.0
+        # with:
+        #   terraform_version: 1.6.0
 
       - name: Terraform Format Check
         run: |
@@ -490,9 +490,9 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.0
-          terraform_wrapper: false
+        # with:
+        #   terraform_version: 1.6.0
+        #   terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
@@ -545,8 +545,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.0
+        # with:
+        #   terraform_version: 1.6.0
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
