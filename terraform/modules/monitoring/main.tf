@@ -329,12 +329,7 @@ resource "aws_cloudwatch_metric_alarm" "custom_metric_alarms" {
   ok_actions          = var.ok_actions
   treat_missing_data  = each.value.treat_missing_data
 
-  dynamic "dimensions" {
-    for_each = each.value.dimensions != null ? [each.value.dimensions] : []
-    content {
-      for k, v in dimensions.value : k => v
-    }
-  }
+  dimensions = each.value.dimensions
 
   tags = {
     Name        = "${var.project_name}-${each.key}-alarm-${var.environment}"
