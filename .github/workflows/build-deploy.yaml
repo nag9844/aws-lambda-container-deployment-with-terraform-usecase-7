@@ -192,6 +192,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.50.2
+
+      - name: Run TFLint
+        run: tflint --init && tflint -f compact
+        working-directory: ./terraform
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        continue-on-error: true
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ./terraform
+          framework: terraform
+        continue-on-error: true
+
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -201,13 +221,18 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.12.0
-          terraform_wrapper: false
+
+      - name: Format Terraform code
+        run: terraform fmt -recursive
+        id: fmt 
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
         run: terraform init
+      
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
 
       - name: Terraform Plan
         id: plan
