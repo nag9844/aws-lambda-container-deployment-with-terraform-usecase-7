@@ -2,7 +2,7 @@
 # Deploy this first to create the ECR repository
 
 terraform {
-  required_version = ">= 1.12.0"
+  required_version = ">= 1.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -12,7 +12,7 @@ terraform {
 
   backend "s3" {
     bucket       = "usecases-terraform-state-bucket"
-    key          = "usecase6/ecr/terraform.tfstate"
+    key          = "usecase7/ecr/terraform.tfstate"
     region       = "ap-south-1"
     encrypt      = true
     use_lockfile = true
