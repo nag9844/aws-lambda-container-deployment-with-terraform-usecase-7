@@ -3,9 +3,9 @@ output "vpc_id" {
   value       = module.vpc.vpc_id
 }
 
-output "ecr_repository_ur" {
-  description = "URI of the ECR repository (from existing repository)"
-  value       = data.aws_ecr_repository.main.repository_ur
+output "ecr_repository_url" {
+  description = "URL of the ECR repository (from existing repository)"
+  value       = data.aws_ecr_repository.main.repository_url
 }
 
 output "lambda_function_arn" {
@@ -44,7 +44,7 @@ output "deployment_summary" {
   value = {
     environment         = "prod"
     api_gateway_url    = module.api_gateway.api_url
-    ecr_repository_ur = data.aws_ecr_repository.main.repository_ur
+    ecr_repository_url = data.aws_ecr_repository.main.repository_url
     dashboard_url      = module.monitoring.dashboard_url
     dlq_url           = aws_sqs_queue.dlq.url
   }
