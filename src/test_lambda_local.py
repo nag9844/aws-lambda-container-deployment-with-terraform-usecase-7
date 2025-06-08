@@ -66,5 +66,5 @@ if __name__ == "__main__":
     print("HTML Response Length:", len(response_html['body']), "characters")
     
     print("\n" + "=" * 50)
-    print("✅ Local tests completed successfully!")
+    print("Local tests completed successfully!")
     print("The Lambda function is ready for deployment.")

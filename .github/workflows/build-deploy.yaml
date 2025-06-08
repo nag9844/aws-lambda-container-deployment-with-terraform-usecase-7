@@ -135,9 +135,9 @@ jobs:
             --repository-name "$REPO_NAME" \
             --image-ids imageTag="$IMAGE_TAG" \
             --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "✅ Image exists in ECR"
+            echo "Image exists in ECR"
           else
-            echo "❌ Image not found in ECR"
+            echo "Image not found in ECR"
             exit 1
           fi
           
@@ -158,7 +158,7 @@ jobs:
           
           # Lambda container image size limit is 10GB, but warn if over 1GB
           if [ "$IMAGE_SIZE_MB" -gt 1024 ]; then
-            echo "⚠️  Warning: Image size is ${IMAGE_SIZE_MB} MB (over 1GB)"
+            echo "Warning: Image size is ${IMAGE_SIZE_MB} MB (over 1GB)"
           fi
           
           # Check if image was built recently
@@ -170,13 +170,13 @@ jobs:
           echo "Manifest type: $MANIFEST_TYPE"
           
           if [[ "$MANIFEST_TYPE" == *"docker"* ]]; then
-            echo "✅ Image manifest type is compatible with Lambda"
+            echo "Image manifest type is compatible with Lambda"
           else
-            echo "⚠️  Warning: Unusual manifest type: $MANIFEST_TYPE"
+            echo "Warning: Unusual manifest type: $MANIFEST_TYPE"
           fi
           
-          echo "✅ Image verification completed successfully"
-          echo "🚀 Image is ready for Lambda deployment"
+          echo "Image verification completed successfully"
+          echo "Image is ready for Lambda deployment"
 
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
@@ -248,19 +248,19 @@ jobs:
           
           # Test API Gateway
           if curl -f -s "$API_URL" >/dev/null; then
-            echo "✅ API Gateway is responding"
+            echo "API Gateway is responding"
           else
-            echo "⚠️  API Gateway test failed, but continuing..."
+            echo "API Gateway test failed, but continuing..."
           fi
           
           # Test Lambda Function URL
           if [ -n "$FUNCTION_URL" ] && curl -f -s "$FUNCTION_URL" >/dev/null; then
-            echo "✅ Lambda Function URL is responding"
+            echo "Lambda Function URL is responding"
           else
-            echo "⚠️  Lambda Function URL test failed, but continuing..."
+            echo "Lambda Function URL test failed, but continuing..."
           fi
           
-          echo "🎉 Deployment completed successfully!"
+          echo "Deployment completed successfully!"
 
       - name: Comment Plan on PR
         if: github.event_name == 'pull_request'

@@ -13,8 +13,3 @@ COPY app.py ${LAMBDA_TASK_ROOT}
 
 # Set the CMD to your handler
 CMD ["app.lambda_handler"]
-
-# Add labels for better container management
-LABEL maintainer="DevOps Team"
-LABEL version="1.0.0"
-LABEL description="Hello World Lambda Container"

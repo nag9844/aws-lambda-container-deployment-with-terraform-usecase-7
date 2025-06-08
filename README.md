@@ -6,21 +6,28 @@ This project demonstrates a complete DevOps solution for deploying containerized
 
 ## Architecture
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   GitHub Actions│    │      ECR        │    │    Lambda       │
-│                 │───▶│   Repository    │───▶│   Container     │
-│   - Build       │    │                 │    │   Function      │
-│   - Test        │    └─────────────────┘    └─────────────────┘
-│   - Deploy      │                                     │
-└─────────────────┘                                     ▼
-                                               ┌─────────────────┐
-┌─────────────────┐    ┌─────────────────┐    │   API Gateway   │
-│   Terraform     │    │      VPC        │    │                 │
-│                 │───▶│   Subnets       │    │   REST API      │
-│   - State Mgmt  │    │   Security      │    │   Integration   │
-│   - Multi-Env   │    │   Groups        │    └─────────────────┘
-└─────────────────┘    └─────────────────┘
+```mermaid
+graph TB
+    A[GitHub Repository] --> B[GitHub Actions]
+    B --> C[Docker Build & Push]
+    C --> D[Amazon ECR]
+    B --> E[Terraform Apply]
+    E --> F[AWS Lambda]
+    E --> G[API Gateway]
+    E --> H[VPC & Networking]
+    E --> I[CloudWatch & X-Ray]
+    D --> F
+    G --> F
+    H --> F
+    F --> I
+    
+    subgraph "AWS Infrastructure (ap-south-1)"
+        F
+        G
+        H
+        I
+        D
+    end
 ```
 
 ## Project Structure
@@ -30,8 +37,8 @@ This project demonstrates a complete DevOps solution for deploying containerized
 ├── .github/
 │   └── workflows/
 │       ├── ecr.yml
-│       ├── build-push.yml
-│       └── infrastructure.yml
+│       ├── build-deploy.yml
+│       └── destroy-infrastructure.yml
 ├── terraform/
 │   ├── environments/
 │   │   ├── dev/
@@ -96,15 +103,3 @@ This project demonstrates a complete DevOps solution for deploying containerized
 - VPC isolation
 - Security groups with minimal access
 - Encrypted S3 state backend
-
-## Contributing
-
-1. Create feature branch
-2. Make changes
-3. Run terraform validate
-4. Submit pull request
-5. Review terraform plan output
-
-## Support
-
-For issues and questions, please create a GitHub issue.

@@ -1,6 +1,6 @@
-# 🚀 Complete Workflow Deployment Guide
+# Complete Workflow Deployment Guide
 
-## Prerequisites ✅
+## Prerequisites
 
 Before starting, ensure you have:
 
@@ -9,9 +9,9 @@ Before starting, ensure you have:
    - `AWS_ROLE_ARN`: Your OIDC role ARN
 3. **S3 Bucket** exists: `usecases-terraform-state-bucket` in `ap-south-1`
 
-## 📋 Deployment Sequence
+##  Deployment Sequence
 
-### **Step 1: Create ECR Repository** 🐳
+### **Step 1: Create ECR Repository** 
 **Workflow:** `deploy-ecr.yml`
 
 ```bash
@@ -27,7 +27,7 @@ gh workflow run deploy-ecr.yml \
 
 ---
 
-### **Step 2: Build & Deploy Everything** 🏗️
+### **Step 2: Build & Deploy Everything** 
 **Workflow:** `build-deploy.yml` *(Recommended - All-in-One)*
 
 ```bash
@@ -45,7 +45,7 @@ gh workflow run build-deploy.yml \
 
 ---
 
-### **Alternative: Separate Build & Infrastructure** 🔄
+### **Alternative: Separate Build & Infrastructure** 
 
 If you prefer separate steps:
 
@@ -69,7 +69,7 @@ gh workflow run infrastructure.yml \
 
 ---
 
-## 🎯 Workflow Summary
+##  Workflow Summary
 
 | Workflow | Purpose | When to Use |
 |----------|---------|-------------|
@@ -81,7 +81,7 @@ gh workflow run infrastructure.yml \
 
 ---
 
-## 🔄 Typical Development Workflow
+##  Typical Development Workflow
 
 ### **Initial Setup (One Time)**
 ```bash
@@ -112,7 +112,7 @@ gh workflow run infrastructure.yml -f environment=dev -f action=apply
 
 ---
 
-## 🌍 Multi-Environment Deployment
+##  Multi-Environment Deployment
 
 ### **Development**
 ```bash
@@ -139,7 +139,7 @@ gh workflow run build-deploy.yml -f environment=prod -f image_tag=v1.0.0
 
 ---
 
-## 🧹 Cleanup
+##  Cleanup
 
 ### **Destroy Infrastructure Only**
 ```bash
@@ -158,7 +158,7 @@ gh workflow run destroy-infrastructure.yml \
 
 ---
 
-## 🔍 Monitoring Deployments
+##  Monitoring Deployments
 
 ### **Check Workflow Status**
 ```bash
@@ -177,7 +177,7 @@ After successful deployment, you'll get:
 
 ---
 
-## ⚠️ Important Notes
+##  Important Notes
 
 1. **Always run ECR workflow first** for new environments
 2. **Use `build-deploy.yml`** for most deployments (it's the complete workflow)
@@ -187,7 +187,7 @@ After successful deployment, you'll get:
 
 ---
 
-## 🆘 Troubleshooting
+##  Troubleshooting
 
 ### **ECR Repository Not Found**
 ```bash
@@ -209,7 +209,7 @@ aws s3 ls s3://usecases-terraform-state-bucket/
 
 ---
 
-## 🎉 Quick Start Commands
+##  Quick Start Commands
 
 For a complete fresh deployment:
 

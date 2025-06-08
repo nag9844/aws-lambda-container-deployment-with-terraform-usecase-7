@@ -255,12 +255,3 @@ aws ecr list-images --repository-name hello-world-lambda-dev
 2. **Log Retention**: Shorter retention for non-production
 3. **Image Lifecycle**: Automatic cleanup of old images
 4. **Reserved Capacity**: Consider reserved capacity for production
-
-## Support and Maintenance
-
-1. **Regular Updates**: Keep Terraform and container images updated
-2. **Security Patches**: Monitor and apply security updates
-3. **Performance Monitoring**: Regular review of metrics and alarms
-4. **Backup and Recovery**: Ensure proper backup strategies
-
-For additional support, refer to the main README.md or create a GitHub issue.
