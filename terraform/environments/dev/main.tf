@@ -10,7 +10,10 @@ terraform {
   }
 
   backend "s3" {
-    # Backend configuration is provided via CLI or backend config file
+    bucket       = "usecases-terraform-state-bucket"
+    key          = "usecase7/dev/statefile.tfstate"
+    region       = "ap-south-1"
+    encrypt      = true
     use_lockfile = true
   }
 }
@@ -30,8 +33,8 @@ provider "aws" {
 # Local variables
 locals {
   environment = "dev"
-  # Force container deployment for dev environment
-  use_container_deployment = true
+  # Start with ZIP deployment, will be upgraded to container via CI/CD
+  use_container_deployment = false
 }
 
 # Data sources
@@ -41,6 +44,11 @@ data "aws_region" "current" {}
 # Data source to get existing ECR repository (created by ECR workflow)
 data "aws_ecr_repository" "main" {
   name = "${var.project_name}-${local.environment}"
+}
+
+# Check if ECR repository has images
+data "aws_ecr_repository_images" "main" {
+  repository_name = data.aws_ecr_repository.main.name
 }
 
 # VPC Module
@@ -65,8 +73,8 @@ module "lambda" {
   timeout      = 30
   memory_size  = 256
 
-  # Force container mode for dev environment
-  force_container_mode = local.use_container_deployment
+  # Use container mode only if image URI is provided and images exist in ECR
+  force_container_mode = var.lambda_image_uri != "" && length(data.aws_ecr_repository_images.main.image_ids) > 0
 
   environment_variables = {
     ENVIRONMENT = local.environment

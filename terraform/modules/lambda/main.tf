@@ -1,23 +1,23 @@
-# Lambda Module - Create Lambda function with container deployment
+# Lambda Module - Create Lambda function with smart deployment mode detection
 
-# Lambda function - configured for container deployment
+# Lambda function - automatically detects deployment mode
 resource "aws_lambda_function" "main" {
   function_name = "${var.project_name}-${var.environment}"
   role          = aws_iam_role.lambda_execution.arn
   timeout       = var.timeout
   memory_size   = var.memory_size
 
-  # Container deployment configuration
-  package_type = var.force_container_mode ? "Image" : "Zip"
+  # Smart deployment mode detection
+  package_type = var.force_container_mode && var.image_uri != "" ? "Image" : "Zip"
   
   # Container image URI (when using container mode)
-  image_uri = var.force_container_mode ? var.image_uri : null
+  image_uri = var.force_container_mode && var.image_uri != "" ? var.image_uri : null
   
-  # ZIP deployment fallback (when not using container mode)
-  filename         = var.force_container_mode ? null : data.archive_file.placeholder[0].output_path
-  source_code_hash = var.force_container_mode ? null : data.archive_file.placeholder[0].output_base64sha256
-  handler          = var.force_container_mode ? null : "index.lambda_handler"
-  runtime          = var.force_container_mode ? null : "python3.11"
+  # ZIP deployment (when not using container mode or no image available)
+  filename         = var.force_container_mode && var.image_uri != "" ? null : data.archive_file.placeholder[0].output_path
+  source_code_hash = var.force_container_mode && var.image_uri != "" ? null : data.archive_file.placeholder[0].output_base64sha256
+  handler          = var.force_container_mode && var.image_uri != "" ? null : "index.lambda_handler"
+  runtime          = var.force_container_mode && var.image_uri != "" ? null : "python3.11"
 
   dynamic "vpc_config" {
     for_each = var.vpc_config != null ? [var.vpc_config] : []
@@ -45,8 +45,8 @@ resource "aws_lambda_function" "main" {
     Name           = "${var.project_name}-lambda-${var.environment}"
     Environment    = var.environment
     Project        = var.project_name
-    DeploymentType = var.force_container_mode ? "container" : "zip"
-    PackageType    = var.force_container_mode ? "Image" : "Zip"
+    DeploymentType = var.force_container_mode && var.image_uri != "" ? "container" : "zip"
+    PackageType    = var.force_container_mode && var.image_uri != "" ? "Image" : "Zip"
   }
 
   depends_on = [
@@ -63,7 +63,7 @@ resource "aws_lambda_function" "main" {
 
 # Create placeholder zip file for initial deployment with beautiful webpage
 resource "local_file" "placeholder_zip" {
-  count = var.force_container_mode ? 0 : 1
+  count = var.force_container_mode && var.image_uri != "" ? 0 : 1
   
   content = <<EOF
 import json
@@ -530,7 +530,7 @@ EOF
 
 # Create zip archive for placeholder
 data "archive_file" "placeholder" {
-  count = var.force_container_mode ? 0 : 1
+  count = var.force_container_mode && var.image_uri != "" ? 0 : 1
   
   type        = "zip"
   output_path = "${path.module}/placeholder.zip"
