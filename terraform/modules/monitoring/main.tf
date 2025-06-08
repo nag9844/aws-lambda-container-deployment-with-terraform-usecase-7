@@ -276,9 +276,8 @@ resource "aws_sns_topic_subscription" "slack_alerts" {
 
 # CloudWatch Composite Alarm for overall health
 resource "aws_cloudwatch_composite_alarm" "overall_health" {
-  count       = var.create_composite_alarm ? 1 : 0
-  alarm_name  = "${var.project_name}-${var.environment}-overall-health"
-  description = "Overall health of ${var.project_name} ${var.environment}"
+  count      = var.create_composite_alarm ? 1 : 0
+  alarm_name = "${var.project_name}-${var.environment}-overall-health"
 
   alarm_rule = join(" OR ", [
     "ALARM(${aws_cloudwatch_metric_alarm.lambda_errors.alarm_name})",
