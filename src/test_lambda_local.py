@@ -23,7 +23,7 @@ class MockLambdaContext:
     def __init__(self):
         self.function_name = "hello-world-lambda-dev"
         self.function_version = "$LATEST"
-        self.invoked_function_arn = "arn:aws:lambda:us-east-1:123456789012:function:hello-world-lambda-dev"
+        self.invoked_function_arn = "arn:aws:lambda:ap-south-1:123456789012:function:hello-world-lambda-dev"
         self.memory_limit_in_mb = "256"
         self.remaining_time_in_millis = 30000
         self.log_group_name = "/aws/lambda/hello-world-lambda-dev"

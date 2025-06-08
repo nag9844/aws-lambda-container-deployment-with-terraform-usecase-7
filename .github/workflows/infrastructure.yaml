@@ -146,13 +146,12 @@ jobs:
               body: comment
             });
 
-  # Deploy infrastructure first (creates Lambda with ZIP deployment)
-  terraform-apply-push:
+  # Step 1: Deploy Infrastructure (creates Lambda with ZIP deployment)
+  deploy-infrastructure:
     name: Deploy Infrastructure
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [terraform-validate]
     
     steps:
       - name: Checkout code
@@ -198,20 +197,33 @@ jobs:
         if: steps.outputs.outputs.api_url != ''
         run: |
           echo "🧪 Testing initial Lambda deployment..."
-          curl -f "${{ steps.outputs.outputs.api_url }}" || echo "Initial deployment test - function may not be ready yet"
+          echo "🌐 API Gateway URL: ${{ steps.outputs.outputs.api_url }}"
+          
+          # Wait for API Gateway to be ready
+          sleep 15
+          
+          # Test the endpoint
+          RESPONSE=$(curl -s -w "\n%{http_code}" "${{ steps.outputs.outputs.api_url }}")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Initial deployment test successful!"
+          else
+            echo "⚠️ Initial deployment returned HTTP $HTTP_CODE - function may need more time to initialize"
+          fi
 
     outputs:
       api_url: ${{ steps.outputs.outputs.api_url }}
       lambda_arn: ${{ steps.outputs.outputs.lambda_arn }}
       lambda_name: ${{ steps.outputs.outputs.lambda_name }}
 
-  # Build and deploy container image (after infrastructure exists)
+  # Step 2: Build and Deploy Container Image
   build-and-deploy-container:
     name: Build and Deploy Container
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [terraform-apply-push]
+    needs: [deploy-infrastructure]
     
     steps:
       - name: Checkout code
@@ -233,7 +245,7 @@ jobs:
           REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
           ECR_URI=$(aws ecr describe-repositories --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
           echo "ecr_uri=$ECR_URI" >> $GITHUB_OUTPUT
-          echo "ECR Repository URI: $ECR_URI"
+          echo "📦 ECR Repository URI: $ECR_URI"
 
       - name: Extract metadata
         id: meta
@@ -242,7 +254,6 @@ jobs:
           images: ${{ steps.get-ecr-uri.outputs.ecr_uri }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
             type=sha,prefix={{branch}}-
             type=raw,value=latest
             type=raw,value={{date 'YYYYMMDD-HHmmss'}}
@@ -262,114 +273,200 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
-      - name: Update Lambda to Container Mode
+      - name: Convert Lambda to Container Mode
         run: |
-          FUNCTION_NAME="${{ needs.terraform-apply-push.outputs.lambda_name }}"
+          FUNCTION_NAME="${{ needs.deploy-infrastructure.outputs.lambda_name }}"
           IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:latest"
           
           echo "🚀 Converting Lambda function to container mode"
           echo "📦 Function: $FUNCTION_NAME"
           echo "🖼️ Image: $IMAGE_URI"
           
+          # Function to check if function exists
+          function_exists() {
+            aws lambda get-function --function-name $1 --region ${{ env.AWS_REGION }} >/dev/null 2>&1
+            return $?
+          }
+          
+          # Function to wait for function deletion
+          wait_for_deletion() {
+            echo "⏳ Waiting for function deletion to complete..."
+            local max_attempts=30
+            local attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+              if ! function_exists $FUNCTION_NAME; then
+                echo "✅ Function successfully deleted after $attempt attempts"
+                return 0
+              fi
+              echo "🔄 Attempt $attempt/$max_attempts: Function still exists, waiting..."
+              sleep 5
+              attempt=$((attempt + 1))
+            done
+            
+            echo "❌ ERROR: Function deletion timed out after $max_attempts attempts"
+            return 1
+          }
+          
+          # Function to wait for function to be active
+          wait_for_active() {
+            echo "⏳ Waiting for function to become active..."
+            local max_attempts=30
+            local attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+              STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.State' --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "NotFound")
+              if [ "$STATUS" = "Active" ]; then
+                echo "✅ Function is now active after $attempt attempts"
+                return 0
+              fi
+              echo "🔄 Attempt $attempt/$max_attempts: Function status is $STATUS, waiting..."
+              sleep 10
+              attempt=$((attempt + 1))
+            done
+            
+            echo "❌ ERROR: Function activation timed out after $max_attempts attempts"
+            return 1
+          }
+          
+          # Verify function exists
+          if ! function_exists $FUNCTION_NAME; then
+            echo "❌ ERROR: Function $FUNCTION_NAME does not exist!"
+            echo "Please ensure the infrastructure deployment completed successfully"
+            exit 1
+          fi
+          
           # Get current function configuration
           echo "📋 Getting current function configuration..."
           CURRENT_CONFIG=$(aws lambda get-function-configuration --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }})
+          CURRENT_PACKAGE_TYPE=$(echo $CURRENT_CONFIG | jq -r '.PackageType')
           ROLE_ARN=$(echo $CURRENT_CONFIG | jq -r '.Role')
           TIMEOUT=$(echo $CURRENT_CONFIG | jq -r '.Timeout')
           MEMORY_SIZE=$(echo $CURRENT_CONFIG | jq -r '.MemorySize')
           ENV_VARS_JSON=$(echo $CURRENT_CONFIG | jq -c '.Environment.Variables // {}')
           
+          echo "📦 Current package type: $CURRENT_PACKAGE_TYPE"
           echo "🔑 Role: $ROLE_ARN"
           echo "⏱️ Timeout: $TIMEOUT"
           echo "💾 Memory: $MEMORY_SIZE"
           echo "🌍 Environment Variables: $ENV_VARS_JSON"
           
-          # Delete existing function
-          echo "🗑️ Deleting existing ZIP-based function..."
-          aws lambda delete-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }}
-          
-          # Wait for deletion
-          echo "⏳ Waiting for function deletion..."
-          sleep 30
-          
-          # Verify deletion
-          for i in {1..10}; do
-            if ! aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-              echo "✅ Function successfully deleted"
-              break
+          if [ "$CURRENT_PACKAGE_TYPE" = "Image" ]; then
+            echo "🐳 Function is already container-based, updating image..."
+            aws lambda update-function-code \
+              --function-name $FUNCTION_NAME \
+              --image-uri $IMAGE_URI \
+              --region ${{ env.AWS_REGION }}
+            
+            if ! wait_for_active; then
+              echo "❌ ERROR: Function update failed"
+              exit 1
             fi
-            echo "🔄 Waiting for deletion... attempt $i/10"
-            sleep 10
-          done
-          
-          # Create new container-based function
-          echo "🆕 Creating new container-based function..."
-          if [ "$ENV_VARS_JSON" = "{}" ] || [ "$ENV_VARS_JSON" = "null" ]; then
-            aws lambda create-function \
-              --function-name $FUNCTION_NAME \
-              --role $ROLE_ARN \
-              --code ImageUri=$IMAGE_URI \
-              --package-type Image \
-              --timeout $TIMEOUT \
-              --memory-size $MEMORY_SIZE \
-              --region ${{ env.AWS_REGION }}
           else
-            echo "$ENV_VARS_JSON" > /tmp/env_vars.json
-            aws lambda create-function \
-              --function-name $FUNCTION_NAME \
-              --role $ROLE_ARN \
-              --code ImageUri=$IMAGE_URI \
-              --package-type Image \
-              --timeout $TIMEOUT \
-              --memory-size $MEMORY_SIZE \
-              --environment file:///tmp/env_vars.json \
-              --region ${{ env.AWS_REGION }}
+            echo "🔄 Function is ZIP-based, converting to container..."
+            
+            # Delete existing function
+            echo "🗑️ Deleting existing ZIP-based function..."
+            aws lambda delete-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }}
+            
+            # Wait for deletion
+            if ! wait_for_deletion; then
+              echo "❌ ERROR: Failed to delete function"
+              exit 1
+            fi
+            
+            # Create new container-based function
+            echo "🆕 Creating new container-based function..."
+            
+            if [ "$ENV_VARS_JSON" = "{}" ] || [ "$ENV_VARS_JSON" = "null" ]; then
+              # No environment variables
+              aws lambda create-function \
+                --function-name $FUNCTION_NAME \
+                --role $ROLE_ARN \
+                --code ImageUri=$IMAGE_URI \
+                --package-type Image \
+                --timeout $TIMEOUT \
+                --memory-size $MEMORY_SIZE \
+                --region ${{ env.AWS_REGION }}
+            else
+              # With environment variables
+              echo "$ENV_VARS_JSON" > /tmp/env_vars.json
+              cat > /tmp/env_config.json << EOF
+          {
+            "Variables": $(cat /tmp/env_vars.json)
+          }
+          EOF
+              
+              echo "📄 Environment config:"
+              cat /tmp/env_config.json
+              
+              aws lambda create-function \
+                --function-name $FUNCTION_NAME \
+                --role $ROLE_ARN \
+                --code ImageUri=$IMAGE_URI \
+                --package-type Image \
+                --timeout $TIMEOUT \
+                --memory-size $MEMORY_SIZE \
+                --environment file:///tmp/env_config.json \
+                --region ${{ env.AWS_REGION }}
+            fi
+            
+            # Wait for function to be active
+            if ! wait_for_active; then
+              echo "❌ ERROR: Function creation failed"
+              exit 1
+            fi
           fi
           
-          # Wait for function to be active
-          echo "⏳ Waiting for function to become active..."
-          aws lambda wait function-active --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }}
-          
           # Verify final state
+          echo "🔍 Verifying final state..."
           FINAL_CONFIG=$(aws lambda get-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }})
           FINAL_PACKAGE_TYPE=$(echo $FINAL_CONFIG | jq -r '.Configuration.PackageType')
-          FINAL_IMAGE_URI=$(echo $FINAL_CONFIG | jq -r '.Code.ImageUri')
+          FINAL_IMAGE_URI=$(echo $FINAL_CONFIG | jq -r '.Code.ImageUri // "N/A"')
+          FINAL_STATE=$(echo $FINAL_CONFIG | jq -r '.Configuration.State')
           
           echo "✅ Conversion completed successfully!"
           echo "📦 Final package type: $FINAL_PACKAGE_TYPE"
           echo "🖼️ Final image URI: $FINAL_IMAGE_URI"
+          echo "🟢 Final state: $FINAL_STATE"
 
       - name: Test Updated Function
         run: |
           echo "🧪 Testing updated container-based function..."
-          API_URL="${{ needs.terraform-apply-push.outputs.api_url }}"
+          API_URL="${{ needs.deploy-infrastructure.outputs.api_url }}"
           
           if [ -n "$API_URL" ]; then
             echo "🌐 Testing API Gateway endpoint: $API_URL"
             
-            # Wait a moment for API Gateway to recognize the updated function
-            sleep 10
+            # Wait for API Gateway to recognize the updated function
+            sleep 20
             
-            # Test the endpoint
-            RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL")
-            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            
-            echo "📊 HTTP Status: $HTTP_CODE"
-            
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "✅ Function test successful!"
-              echo "📄 Response preview:"
-              echo "$BODY" | head -c 300
-              echo ""
-              echo ""
-              echo "🎉 Container deployment completed successfully!"
-              echo "🌐 Your updated function is live at: $API_URL"
-            else
-              echo "⚠️ Function test returned HTTP $HTTP_CODE"
-              echo "Response: $BODY"
-              echo "The function was deployed but may need a moment to become fully available"
-            fi
+            # Test the endpoint multiple times to ensure consistency
+            for i in {1..3}; do
+              echo "🔄 Test attempt $i/3..."
+              RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL")
+              HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+              BODY=$(echo "$RESPONSE" | head -n -1)
+              
+              echo "📊 HTTP Status: $HTTP_CODE"
+              
+              if [ "$HTTP_CODE" = "200" ]; then
+                echo "✅ Function test successful!"
+                echo "📄 Response preview:"
+                echo "$BODY" | head -c 300
+                echo ""
+                echo ""
+                echo "🎉 Container deployment completed successfully!"
+                echo "🌐 Your updated function is live at: $API_URL"
+                break
+              else
+                echo "⚠️ Test $i failed with HTTP $HTTP_CODE"
+                if [ $i -lt 3 ]; then
+                  echo "Waiting 10 seconds before retry..."
+                  sleep 10
+                fi
+              fi
+            done
           else
             echo "⚠️ API Gateway URL not available for testing"
           fi

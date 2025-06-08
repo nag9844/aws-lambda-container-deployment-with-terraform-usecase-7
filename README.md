@@ -45,7 +45,9 @@ This project demonstrates a complete DevOps solution for deploying containerized
 │       └── monitoring/
 ├── src/
 │   ├── app.py
-│   └── Dockerfile
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── test_lambda_local.py
 └── docs/
     └── setup.md
 ```
