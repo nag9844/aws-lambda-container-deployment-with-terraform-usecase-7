@@ -19,7 +19,7 @@ def lambda_handler(event, context):
     
     logger.info(f"Received event: {json.dumps(event)}")
     
-    # Simple Hello World response
+    # Simple Hello World response with updated message
     return {
         'statusCode': 200,
         'headers': {
