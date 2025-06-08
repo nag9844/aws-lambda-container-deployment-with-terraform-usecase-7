@@ -104,61 +104,81 @@ jobs:
           # Scan the image
           trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
 
-      - name: Update Lambda function (Container Mode)
+      - name: Convert Lambda to Container Mode
         if: github.event_name != 'pull_request'
         run: |
           FUNCTION_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
           IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
           
-          echo "Updating Lambda function: $FUNCTION_NAME"
-          echo "With image: $IMAGE_URI"
+          echo "Converting Lambda function: $FUNCTION_NAME to container mode"
+          echo "Using image: $IMAGE_URI"
           
           # Check current function configuration
           CURRENT_PACKAGE_TYPE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.PackageType' --output text)
           echo "Current package type: $CURRENT_PACKAGE_TYPE"
           
           if [ "$CURRENT_PACKAGE_TYPE" = "Zip" ]; then
-            echo "Converting function from ZIP to Image package type..."
+            echo "Function is currently ZIP-based, recreating as container-based..."
             
-            # First, update the function configuration to use Image package type
-            aws lambda update-function-configuration \
+            # Get current function configuration
+            CURRENT_CONFIG=$(aws lambda get-function-configuration --function-name $FUNCTION_NAME)
+            ROLE_ARN=$(echo $CURRENT_CONFIG | jq -r '.Role')
+            TIMEOUT=$(echo $CURRENT_CONFIG | jq -r '.Timeout')
+            MEMORY_SIZE=$(echo $CURRENT_CONFIG | jq -r '.MemorySize')
+            ENVIRONMENT_VARS=$(echo $CURRENT_CONFIG | jq -r '.Environment.Variables // {}')
+            
+            echo "Backing up current function configuration..."
+            echo "Role: $ROLE_ARN"
+            echo "Timeout: $TIMEOUT"
+            echo "Memory: $MEMORY_SIZE"
+            
+            # Delete the existing function
+            echo "Deleting existing ZIP-based function..."
+            aws lambda delete-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }}
+            
+            # Wait a moment for deletion to complete
+            sleep 10
+            
+            # Create new container-based function
+            echo "Creating new container-based function..."
+            aws lambda create-function \
               --function-name $FUNCTION_NAME \
+              --role $ROLE_ARN \
+              --code ImageUri=$IMAGE_URI \
               --package-type Image \
+              --timeout $TIMEOUT \
+              --memory-size $MEMORY_SIZE \
+              --environment Variables="$ENVIRONMENT_VARS" \
               --region ${{ env.AWS_REGION }}
             
-            # Wait for the configuration update to complete
-            echo "Waiting for configuration update to complete..."
-            aws lambda wait function-updated \
+            # Wait for function to be active
+            echo "Waiting for function to become active..."
+            aws lambda wait function-active \
               --function-name $FUNCTION_NAME \
               --region ${{ env.AWS_REGION }}
-            
-            # Now update the function code with the image URI
-            aws lambda update-function-code \
-              --function-name $FUNCTION_NAME \
-              --image-uri $IMAGE_URI \
-              --region ${{ env.AWS_REGION }}
+              
           else
-            echo "Function is already using Image package type, updating code..."
+            echo "Function is already container-based, updating image..."
             # Function is already using Image package type, just update the code
             aws lambda update-function-code \
               --function-name $FUNCTION_NAME \
               --image-uri $IMAGE_URI \
               --region ${{ env.AWS_REGION }}
+            
+            # Wait for the update to complete
+            echo "Waiting for function update to complete..."
+            aws lambda wait function-updated \
+              --function-name $FUNCTION_NAME \
+              --region ${{ env.AWS_REGION }}
           fi
           
-          # Wait for the update to complete
-          echo "Waiting for function update to complete..."
-          aws lambda wait function-updated \
-            --function-name $FUNCTION_NAME \
-            --region ${{ env.AWS_REGION }}
+          echo "Lambda function conversion completed successfully"
           
-          echo "Lambda function updated successfully"
-          
-          # Verify the update
-          UPDATED_PACKAGE_TYPE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.PackageType' --output text)
-          UPDATED_IMAGE_URI=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Code.ImageUri' --output text)
-          echo "Updated package type: $UPDATED_PACKAGE_TYPE"
-          echo "Updated image URI: $UPDATED_IMAGE_URI"
+          # Verify the final state
+          FINAL_PACKAGE_TYPE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.PackageType' --output text)
+          FINAL_IMAGE_URI=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Code.ImageUri' --output text)
+          echo "Final package type: $FINAL_PACKAGE_TYPE"
+          echo "Final image URI: $FINAL_IMAGE_URI"
 
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
