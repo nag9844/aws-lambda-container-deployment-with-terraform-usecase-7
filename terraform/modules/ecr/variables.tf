@@ -8,6 +8,12 @@ variable "environment" {
   type        = string
 }
 
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "ap-south-1"
+}
+
 variable "image_tag_mutability" {
   description = "The tag mutability setting for the repository"
   type        = string
