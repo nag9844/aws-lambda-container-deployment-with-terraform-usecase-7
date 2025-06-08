@@ -1,5 +1,5 @@
 # Use the official AWS Lambda Python runtime as base image
-FROM public.ecr.aws/lambda/python:3.12
+FROM public.ecr.aws/lambda/python:3.11
 
 # Set working directory to Lambda task root
 WORKDIR ${LAMBDA_TASK_ROOT}
@@ -23,10 +23,10 @@ CMD ["app.lambda_handler"]
 
 # Add metadata labels
 LABEL maintainer="DevOps Team"
-LABEL version="2.2.0"
+LABEL version="2.3.0"
 LABEL description="Fixed Hello World Lambda Container"
 LABEL updated="2025-06-08"
-LABEL python.version="3.12"
+LABEL python.version="3.11"
 LABEL architecture="amd64"
 
 # Health check for local testing (optional)
