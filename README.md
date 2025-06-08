@@ -63,7 +63,7 @@ graph TB
 
 1. AWS Account with appropriate permissions
 2. GitHub repository with OIDC configured
-3. Terraform >= 1.0
+3. Terraform >= 1.10.0
 4. Docker
 
 ## Quick Start
@@ -94,7 +94,6 @@ graph TB
 
 - **CloudWatch Logs**: Lambda function logs
 - **CloudWatch Metrics**: Performance metrics
-- **X-Ray**: Distributed tracing (optional)
 
 ## Security Features
 
