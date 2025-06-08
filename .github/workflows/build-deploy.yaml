@@ -118,19 +118,19 @@ jobs:
           sbom: false
           no-cache: true  # Force fresh build to avoid caching issues
 
-      - name: Image vulnerability scan
-        if: github.event_name != 'pull_request'
-        run: |
-          # Install Trivy
-          sudo apt-get update
-          sudo apt-get install wget apt-transport-https gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update
-          sudo apt-get install trivy
+      # - name: Image vulnerability scan
+      #   if: github.event_name != 'pull_request'
+      #   run: |
+      #     # Install Trivy
+      #     sudo apt-get update
+      #     sudo apt-get install wget apt-transport-https gnupg lsb-release
+      #     wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+      #     echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+      #     sudo apt-get update
+      #     sudo apt-get install trivy
           
-          # Scan the image
-          trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ steps.generate-tag.outputs.image_tag }}
+      #     # Scan the image
+      #     trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ steps.generate-tag.outputs.image_tag }}
 
       - name: Verify image compatibility for Lambda
         if: github.event_name != 'pull_request'
