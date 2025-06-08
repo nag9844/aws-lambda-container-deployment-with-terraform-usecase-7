@@ -15,7 +15,7 @@ terraform {
 
   backend "s3" {
     bucket       = "usecases-terraform-state-bucket"
-    key          = "usecase7/prod/statefile.tfstate"
+    key          = "usecase7/dev/statefile.tfstate"
     region       = "ap-south-1"
     encrypt      = true
     use_lockfile = true
@@ -48,15 +48,17 @@ data "aws_ecr_repository" "main" {
   name = "${var.project_name}-${local.environment}"
 }
 
-# Try to get ECR images using external data source
+# Check if ECR repository has images using external data source
 data "external" "ecr_images" {
   program = ["bash", "-c", <<-EOT
     set -e
     REPO_NAME="${var.project_name}-${local.environment}"
     REGION="${var.aws_region}"
     
-    # Try to list images, capture both stdout and stderr
-    if aws ecr list-images --repository-name "$REPO_NAME" --region "$REGION" --output json 2>/dev/null; then
+    # Try to list images and check if any exist
+    IMAGE_COUNT=$(aws ecr list-images --repository-name "$REPO_NAME" --region "$REGION" --query 'length(imageIds)' --output text 2>/dev/null || echo "0")
+    
+    if [ "$IMAGE_COUNT" -gt 0 ]; then
       echo '{"has_images": "true"}'
     else
       echo '{"has_images": "false"}'
