@@ -46,11 +46,6 @@ data "aws_ecr_repository" "main" {
   name = "${var.project_name}-${local.environment}"
 }
 
-# Check if ECR repository has images
-data "aws_ecr_repository_images" "main" {
-  repository_name = data.aws_ecr_repository.main.name
-}
-
 # VPC Module
 module "vpc" {
   source = "../../modules/vpc"
@@ -69,12 +64,12 @@ module "lambda" {
 
   project_name = var.project_name
   environment  = local.environment
-  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : "${data.aws_ecr_repository.main.repository_url}:latest"
+  image_uri    = var.lambda_image_uri
   timeout      = 30
   memory_size  = 256
 
-  # Use container mode only if image URI is provided and images exist in ECR
-  force_container_mode = var.lambda_image_uri != "" && length(data.aws_ecr_repository_images.main.image_ids) > 0
+  # Use container mode only if image URI is provided
+  force_container_mode = var.lambda_image_uri != ""
 
   environment_variables = {
     ENVIRONMENT = local.environment
