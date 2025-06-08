@@ -94,12 +94,6 @@ variable "function_url_cors" {
   default = null
 }
 
-variable "api_gateway_execution_arn" {
-  description = "Execution ARN of the API Gateway to allow invocation from"
-  type        = string
-  default     = null
-}
-
 variable "create_alias" {
   description = "Create an alias for the Lambda function"
   type        = bool

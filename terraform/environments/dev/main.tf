@@ -56,22 +56,7 @@ module "vpc" {
   enable_flow_logs   = false  # Disabled for dev to save costs
 }
 
-# API Gateway Module (must be created before Lambda for permissions)
-module "api_gateway" {
-  source = "../../modules/api-gateway"
-
-  project_name      = var.project_name
-  environment       = local.environment
-  lambda_invoke_arn = "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}-${local.environment}"
-  stage_name        = "dev"
-  
-  enable_access_logs = true
-  log_retention_days = 7  # Shorter retention for dev
-  enable_metrics     = true
-  logging_level      = "INFO"
-}
-
-# Lambda Module
+# Lambda Module (created first)
 module "lambda" {
   source = "../../modules/lambda"
 
@@ -98,11 +83,45 @@ module "lambda" {
   }
 
   log_retention_days = 7  # Shorter retention for dev
-  
-  # CRITICAL: Pass API Gateway execution ARN for permissions
-  api_gateway_execution_arn = module.api_gateway.execution_arn
+}
 
-  depends_on = [module.api_gateway]
+# API Gateway Module (created after Lambda to use proper invoke ARN)
+module "api_gateway" {
+  source = "../../modules/api-gateway"
+
+  project_name      = var.project_name
+  environment       = local.environment
+  lambda_invoke_arn = module.lambda.function_invoke_arn  # Use actual invoke ARN
+  stage_name        = "dev"
+  
+  enable_access_logs = true
+  log_retention_days = 7  # Shorter retention for dev
+  enable_metrics     = true
+  logging_level      = "INFO"
+
+  depends_on = [module.lambda]
+}
+
+# Lambda permission for API Gateway (separate resource)
+resource "aws_lambda_permission" "api_gateway_invoke" {
+  statement_id  = "AllowExecutionFromAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = module.lambda.function_name
+  principal     = "apigateway.amazonaws.com"
+  
+  # Allow all API Gateway executions for this function
+  source_arn = "${module.api_gateway.execution_arn}/*/*"
+}
+
+# Additional permission for API Gateway root resource
+resource "aws_lambda_permission" "api_gateway_invoke_root" {
+  statement_id  = "AllowExecutionFromAPIGatewayRoot"
+  action        = "lambda:InvokeFunction"
+  function_name = module.lambda.function_name
+  principal     = "apigateway.amazonaws.com"
+  
+  # Allow API Gateway to invoke for root path
+  source_arn = "${module.api_gateway.execution_arn}/*"
 }
 
 # Monitoring Module
