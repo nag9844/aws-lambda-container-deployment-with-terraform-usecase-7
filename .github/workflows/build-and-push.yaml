@@ -44,7 +44,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -75,6 +75,7 @@ jobs:
             type=ref,event=pr
             type=sha,prefix={{branch}}-
             type=raw,value=${{ github.event.inputs.image_tag || 'latest' }}
+            type=raw,value={{date 'YYYYMMDD-HHmmss'}}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -105,141 +106,183 @@ jobs:
           # Scan the image
           trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
 
-      # - name: Convert Lambda to Container Mode
-      #   if: github.event_name != 'pull_request'
-      #   run: |
-      #     FUNCTION_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
-      #     IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
+      - name: Update Lambda Function with New Image
+        if: github.event_name != 'pull_request'
+        run: |
+          FUNCTION_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
+          IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
           
-      #     echo "Converting Lambda function: $FUNCTION_NAME to container mode"
-      #     echo "Using image: $IMAGE_URI"
+          echo "🚀 Updating Lambda function: $FUNCTION_NAME"
+          echo "📦 Using image: $IMAGE_URI"
           
-      #     # Function to check if function exists
-      #     function_exists() {
-      #       aws lambda get-function --function-name $1 --region ${{ env.AWS_REGION }} >/dev/null 2>&1
-      #       return $?
-      #     }
+          # Function to check if function exists
+          function_exists() {
+            aws lambda get-function --function-name $1 --region ${{ env.AWS_REGION }} >/dev/null 2>&1
+            return $?
+          }
           
-      #     # Function to wait for function deletion
-      #     wait_for_deletion() {
-      #       echo "Waiting for function deletion to complete..."
-      #       local max_attempts=30
-      #       local attempt=1
+          # Function to wait for function deletion
+          wait_for_deletion() {
+            echo "⏳ Waiting for function deletion to complete..."
+            local max_attempts=30
+            local attempt=1
             
-      #       while [ $attempt -le $max_attempts ]; do
-      #         if ! function_exists $FUNCTION_NAME; then
-      #           echo "Function successfully deleted after $attempt attempts"
-      #           return 0
-      #         fi
-      #         echo "Attempt $attempt/$max_attempts: Function still exists, waiting..."
-      #         sleep 5
-      #         attempt=$((attempt + 1))
-      #       done
+            while [ $attempt -le $max_attempts ]; do
+              if ! function_exists $FUNCTION_NAME; then
+                echo "✅ Function successfully deleted after $attempt attempts"
+                return 0
+              fi
+              echo "🔄 Attempt $attempt/$max_attempts: Function still exists, waiting..."
+              sleep 5
+              attempt=$((attempt + 1))
+            done
             
-      #       echo "ERROR: Function deletion timed out after $max_attempts attempts"
-      #       return 1
-      #     }
+            echo "❌ ERROR: Function deletion timed out after $max_attempts attempts"
+            return 1
+          }
           
-      #     # Check if function exists first
-      #     if function_exists $FUNCTION_NAME; then
-      #       # Check current function configuration
-      #       CURRENT_PACKAGE_TYPE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.PackageType' --output text)
-      #       echo "Current package type: $CURRENT_PACKAGE_TYPE"
+          # Function to wait for function update
+          wait_for_update() {
+            echo "⏳ Waiting for function update to complete..."
+            local max_attempts=20
+            local attempt=1
             
-      #       if [ "$CURRENT_PACKAGE_TYPE" = "Zip" ]; then
-      #         echo "Function is currently ZIP-based, recreating as container-based..."
+            while [ $attempt -le $max_attempts ]; do
+              STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.State' --output text --region ${{ env.AWS_REGION }})
+              if [ "$STATUS" = "Active" ]; then
+                echo "✅ Function is now active after $attempt attempts"
+                return 0
+              fi
+              echo "🔄 Attempt $attempt/$max_attempts: Function status is $STATUS, waiting..."
+              sleep 10
+              attempt=$((attempt + 1))
+            done
+            
+            echo "❌ ERROR: Function update timed out after $max_attempts attempts"
+            return 1
+          }
+          
+          # Check if function exists first
+          if function_exists $FUNCTION_NAME; then
+            # Check current function configuration
+            CURRENT_PACKAGE_TYPE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.PackageType' --output text --region ${{ env.AWS_REGION }})
+            echo "📋 Current package type: $CURRENT_PACKAGE_TYPE"
+            
+            if [ "$CURRENT_PACKAGE_TYPE" = "Zip" ]; then
+              echo "🔄 Function is currently ZIP-based, converting to container-based..."
               
-      #         # Get current function configuration
-      #         CURRENT_CONFIG=$(aws lambda get-function-configuration --function-name $FUNCTION_NAME)
-      #         ROLE_ARN=$(echo $CURRENT_CONFIG | jq -r '.Role')
-      #         TIMEOUT=$(echo $CURRENT_CONFIG | jq -r '.Timeout')
-      #         MEMORY_SIZE=$(echo $CURRENT_CONFIG | jq -r '.MemorySize')
+              # Get current function configuration
+              CURRENT_CONFIG=$(aws lambda get-function-configuration --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }})
+              ROLE_ARN=$(echo $CURRENT_CONFIG | jq -r '.Role')
+              TIMEOUT=$(echo $CURRENT_CONFIG | jq -r '.Timeout')
+              MEMORY_SIZE=$(echo $CURRENT_CONFIG | jq -r '.MemorySize')
               
-      #         # Extract environment variables properly
-      #         ENV_VARS=$(echo $CURRENT_CONFIG | jq -c '.Environment.Variables // {}')
+              # Extract environment variables properly
+              ENV_VARS=$(echo $CURRENT_CONFIG | jq -c '.Environment.Variables // {}')
               
-      #         echo "Backing up current function configuration..."
-      #         echo "Role: $ROLE_ARN"
-      #         echo "Timeout: $TIMEOUT"
-      #         echo "Memory: $MEMORY_SIZE"
-      #         echo "Environment Variables: $ENV_VARS"
+              echo "💾 Backing up current function configuration..."
+              echo "🔑 Role: $ROLE_ARN"
+              echo "⏱️ Timeout: $TIMEOUT"
+              echo "💾 Memory: $MEMORY_SIZE"
+              echo "🌍 Environment Variables: $ENV_VARS"
               
-      #         # Delete the existing function
-      #         echo "Deleting existing ZIP-based function..."
-      #         aws lambda delete-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }}
+              # Delete the existing function
+              echo "🗑️ Deleting existing ZIP-based function..."
+              aws lambda delete-function --function-name $FUNCTION_NAME --region ${{ env.AWS_REGION }}
               
-      #         # Wait for deletion to complete with proper verification
-      #         if ! wait_for_deletion; then
-      #           echo "ERROR: Failed to delete function, aborting conversion"
-      #           exit 1
-      #         fi
+              # Wait for deletion to complete with proper verification
+              if ! wait_for_deletion; then
+                echo "❌ ERROR: Failed to delete function, aborting conversion"
+                exit 1
+              fi
               
-      #         # Create new container-based function with proper environment variables
-      #         echo "Creating new container-based function..."
-      #         if [ "$ENV_VARS" = "{}" ]; then
-      #           # No environment variables
-      #           aws lambda create-function \
-      #             --function-name $FUNCTION_NAME \
-      #             --role $ROLE_ARN \
-      #             --code ImageUri=$IMAGE_URI \
-      #             --package-type Image \
-      #             --timeout $TIMEOUT \
-      #             --memory-size $MEMORY_SIZE \
-      #             --region ${{ env.AWS_REGION }}
-      #         else
-      #           # With environment variables
-      #           aws lambda create-function \
-      #             --function-name $FUNCTION_NAME \
-      #             --role $ROLE_ARN \
-      #             --code ImageUri=$IMAGE_URI \
-      #             --package-type Image \
-      #             --timeout $TIMEOUT \
-      #             --memory-size $MEMORY_SIZE \
-      #             --environment "Variables=$ENV_VARS" \
-      #             --region ${{ env.AWS_REGION }}
-      #         fi
+              # Create new container-based function with proper environment variables
+              echo "🆕 Creating new container-based function..."
+              if [ "$ENV_VARS" = "{}" ]; then
+                # No environment variables
+                aws lambda create-function \
+                  --function-name $FUNCTION_NAME \
+                  --role $ROLE_ARN \
+                  --code ImageUri=$IMAGE_URI \
+                  --package-type Image \
+                  --timeout $TIMEOUT \
+                  --memory-size $MEMORY_SIZE \
+                  --region ${{ env.AWS_REGION }}
+              else
+                # With environment variables
+                aws lambda create-function \
+                  --function-name $FUNCTION_NAME \
+                  --role $ROLE_ARN \
+                  --code ImageUri=$IMAGE_URI \
+                  --package-type Image \
+                  --timeout $TIMEOUT \
+                  --memory-size $MEMORY_SIZE \
+                  --environment "Variables=$ENV_VARS" \
+                  --region ${{ env.AWS_REGION }}
+              fi
               
-      #         # Wait for function to be active
-      #         echo "Waiting for function to become active..."
-      #         aws lambda wait function-active \
-      #           --function-name $FUNCTION_NAME \
-      #           --region ${{ env.AWS_REGION }}
+              # Wait for function to be active
+              echo "⏳ Waiting for function to become active..."
+              if ! wait_for_update; then
+                echo "❌ ERROR: Function creation failed"
+                exit 1
+              fi
                 
-      #       else
-      #         echo "Function is already container-based, updating image..."
-      #         # Function is already using Image package type, just update the code
-      #         aws lambda update-function-code \
-      #           --function-name $FUNCTION_NAME \
-      #           --image-uri $IMAGE_URI \
-      #           --region ${{ env.AWS_REGION }}
+            else
+              echo "🐳 Function is already container-based, updating image..."
+              # Function is already using Image package type, just update the code
+              aws lambda update-function-code \
+                --function-name $FUNCTION_NAME \
+                --image-uri $IMAGE_URI \
+                --region ${{ env.AWS_REGION }}
               
-      #         # Wait for the update to complete
-      #         echo "Waiting for function update to complete..."
-      #         aws lambda wait function-updated \
-      #           --function-name $FUNCTION_NAME \
-      #           --region ${{ env.AWS_REGION }}
-      #       fi
-      #     else
-      #       echo "Function does not exist, creating new container-based function..."
-      #       # Function doesn't exist, create new container-based function
-      #       # We'll need to get the IAM role from Terraform state or create a basic one
-      #       echo "ERROR: Function does not exist and we cannot determine the IAM role"
-      #       echo "Please ensure the Lambda function exists before running this workflow"
-      #       exit 1
-      #     fi
+              # Wait for the update to complete
+              echo "⏳ Waiting for function update to complete..."
+              if ! wait_for_update; then
+                echo "❌ ERROR: Function update failed"
+                exit 1
+              fi
+            fi
+          else
+            echo "❌ Function does not exist, creating new container-based function..."
+            # Function doesn't exist, create new container-based function
+            # We'll need to get the IAM role from Terraform state or create a basic one
+            echo "❌ ERROR: Function does not exist and we cannot determine the IAM role"
+            echo "Please ensure the Lambda function exists before running this workflow"
+            exit 1
+          fi
           
-      #     echo "Lambda function conversion completed successfully"
+          echo "🎉 Lambda function conversion completed successfully"
           
-      #     # Verify the final state
-      #     if function_exists $FUNCTION_NAME; then
-      #       FINAL_PACKAGE_TYPE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.PackageType' --output text)
-      #       FINAL_IMAGE_URI=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Code.ImageUri' --output text)
-      #       echo "Final package type: $FINAL_PACKAGE_TYPE"
-      #       echo "Final image URI: $FINAL_IMAGE_URI"
-      #     else
-      #       echo "ERROR: Function verification failed - function does not exist after creation"
-      #       exit 1
-      #     fi
+          # Verify the final state
+          if function_exists $FUNCTION_NAME; then
+            FINAL_PACKAGE_TYPE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.PackageType' --output text --region ${{ env.AWS_REGION }})
+            FINAL_IMAGE_URI=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Code.ImageUri' --output text --region ${{ env.AWS_REGION }})
+            FINAL_STATE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.State' --output text --region ${{ env.AWS_REGION }})
+            echo "📦 Final package type: $FINAL_PACKAGE_TYPE"
+            echo "🖼️ Final image URI: $FINAL_IMAGE_URI"
+            echo "🟢 Final state: $FINAL_STATE"
+            
+            # Test the function
+            echo "🧪 Testing the updated function..."
+            TEST_RESULT=$(aws lambda invoke \
+              --function-name $FUNCTION_NAME \
+              --payload '{"httpMethod":"GET","path":"/","headers":{"Accept":"application/json"}}' \
+              --region ${{ env.AWS_REGION }} \
+              response.json)
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ Function test successful!"
+              echo "📄 Response preview:"
+              head -c 200 response.json
+              echo ""
+            else
+              echo "⚠️ Function test failed, but deployment completed"
+            fi
+          else
+            echo "❌ ERROR: Function verification failed - function does not exist after creation"
+            exit 1
+          fi
 
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}

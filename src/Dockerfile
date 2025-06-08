@@ -1,22 +1,26 @@
 # Use the official AWS Lambda Python runtime as base image
 FROM public.ecr.aws/lambda/python:3.12
 
-# Copy requirements.txt
-COPY requirements.txt ${LAMBDA_TASK_ROOT}
+# Set working directory
+WORKDIR ${LAMBDA_TASK_ROOT}
 
-# Install the specified packages
-RUN pip install -r requirements.txt
+# Copy requirements first for better caching
+COPY requirements.txt .
 
-# Copy function code
-COPY app.py ${LAMBDA_TASK_ROOT}
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Set the CMD to your handler (could also be done as a parameter override outside of the Dockerfile)
-CMD [ "app.handler" ]
+# Copy application code
+COPY app.py .
+
+# Set the CMD to your handler
+CMD ["app.lambda_handler"]
 
 # Add labels for better container management
 LABEL maintainer="DevOps Team"
-LABEL version="2.0.0"
-LABEL description="Hello World Lambda Container with Beautiful UI"
+LABEL version="2.1.0"
+LABEL description="Updated Hello World Lambda Container"
+LABEL updated="2025-06-08"
 
 # Add health check (optional, for local testing)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
