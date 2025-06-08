@@ -44,7 +44,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+      
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -177,14 +177,14 @@ jobs:
               TIMEOUT=$(echo $CURRENT_CONFIG | jq -r '.Timeout')
               MEMORY_SIZE=$(echo $CURRENT_CONFIG | jq -r '.MemorySize')
               
-              # Extract environment variables properly
-              ENV_VARS=$(echo $CURRENT_CONFIG | jq -c '.Environment.Variables // {}')
+              # Extract environment variables and convert to proper format
+              ENV_VARS_JSON=$(echo $CURRENT_CONFIG | jq -c '.Environment.Variables // {}')
               
               echo "💾 Backing up current function configuration..."
               echo "🔑 Role: $ROLE_ARN"
               echo "⏱️ Timeout: $TIMEOUT"
               echo "💾 Memory: $MEMORY_SIZE"
-              echo "🌍 Environment Variables: $ENV_VARS"
+              echo "🌍 Environment Variables: $ENV_VARS_JSON"
               
               # Delete the existing function
               echo "🗑️ Deleting existing ZIP-based function..."
@@ -198,8 +198,9 @@ jobs:
               
               # Create new container-based function with proper environment variables
               echo "🆕 Creating new container-based function..."
-              if [ "$ENV_VARS" = "{}" ]; then
+              if [ "$ENV_VARS_JSON" = "{}" ] || [ "$ENV_VARS_JSON" = "null" ]; then
                 # No environment variables
+                echo "📝 Creating function without environment variables..."
                 aws lambda create-function \
                   --function-name $FUNCTION_NAME \
                   --role $ROLE_ARN \
@@ -209,7 +210,10 @@ jobs:
                   --memory-size $MEMORY_SIZE \
                   --region ${{ env.AWS_REGION }}
               else
-                # With environment variables
+                # With environment variables - write to file first to avoid shell parsing issues
+                echo "📝 Creating function with environment variables..."
+                echo "$ENV_VARS_JSON" > /tmp/env_vars.json
+                
                 aws lambda create-function \
                   --function-name $FUNCTION_NAME \
                   --role $ROLE_ARN \
@@ -217,7 +221,7 @@ jobs:
                   --package-type Image \
                   --timeout $TIMEOUT \
                   --memory-size $MEMORY_SIZE \
-                  --environment "Variables=$ENV_VARS" \
+                  --environment file:///tmp/env_vars.json \
                   --region ${{ env.AWS_REGION }}
               fi
               
@@ -276,6 +280,7 @@ jobs:
               echo "📄 Response preview:"
               head -c 200 response.json
               echo ""
+              echo "🌐 You can now test your updated function via API Gateway!"
             else
               echo "⚠️ Function test failed, but deployment completed"
             fi
