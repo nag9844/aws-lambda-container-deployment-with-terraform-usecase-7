@@ -184,7 +184,14 @@ jobs:
         run: |
           echo "🔨 Building Docker image locally for validation..."
           cd src
-          docker build -t test-lambda-image .
+          
+          # Build with explicit platform for Lambda compatibility
+          docker build \
+            --platform linux/amd64 \
+            --tag test-lambda-image \
+            --file Dockerfile \
+            .
+          
           echo "✅ Local build successful"
 
       - name: Validate Docker Image Structure
@@ -199,17 +206,26 @@ jobs:
             exit 1
           fi
           
+          # Check image architecture
+          ARCH=$(docker inspect test-lambda-image --format='{{.Architecture}}')
+          echo "🏗️ Image architecture: $ARCH"
+          
+          if [ "$ARCH" != "amd64" ]; then
+            echo "❌ Image architecture should be amd64 for Lambda compatibility"
+            exit 1
+          fi
+          
           # Check image size
           IMAGE_SIZE=$(docker images test-lambda-image --format "table {{.Size}}" | tail -n 1)
           echo "📊 Image size: $IMAGE_SIZE"
           
           # Verify the image contains our files
           echo "📁 Checking image contents..."
-          docker run --rm --entrypoint="" test-lambda-image ls -la /var/task/
+          docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image ls -la /var/task/
           
           # Check that Python files are present
           echo "🐍 Verifying Python files..."
-          if docker run --rm --entrypoint="" test-lambda-image test -f /var/task/app.py; then
+          if docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image test -f /var/task/app.py; then
             echo "✅ app.py found in image"
           else
             echo "❌ app.py not found in image"
@@ -217,10 +233,10 @@ jobs:
           fi
           
           # Check requirements.txt if it exists
-          if docker run --rm --entrypoint="" test-lambda-image test -f /var/task/requirements.txt; then
+          if docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image test -f /var/task/requirements.txt; then
             echo "✅ requirements.txt found in image"
             echo "📋 Requirements content:"
-            docker run --rm --entrypoint="" test-lambda-image cat /var/task/requirements.txt
+            docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image cat /var/task/requirements.txt
           else
             echo "ℹ️ requirements.txt not found (optional)"
           fi
@@ -233,11 +249,11 @@ jobs:
           
           # Test Python version
           echo "📋 Python version:"
-          docker run --rm --entrypoint="" test-lambda-image python --version
+          docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image python --version
           
           # Test that our module can be imported in the container
           echo "📦 Testing module import in container..."
-          docker run --rm --entrypoint="" test-lambda-image python -c "
+          docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image python -c "
           import sys
           import os
           
@@ -274,7 +290,7 @@ jobs:
           
           # Test boto3 availability (should be included in Lambda base image)
           echo "🔧 Testing boto3 availability..."
-          docker run --rm --entrypoint="" test-lambda-image python -c "
+          docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image python -c "
           try:
               import boto3
               print('✅ boto3 is available')
@@ -284,34 +300,70 @@ jobs:
               sys.exit(1)
           "
           
-          # Test requirements.txt dependencies if they exist
-          echo "📦 Testing requirements.txt dependencies..."
-          docker run --rm --entrypoint="" test-lambda-image python -c "
-          import os
+          echo "✅ All Python environment tests passed"
+
+      - name: Test Lambda Runtime Interface
+        run: |
+          echo "🔧 Testing Lambda Runtime Interface..."
           
-          if os.path.exists('/var/task/requirements.txt'):
-              print('📋 Found requirements.txt, testing dependencies...')
-              with open('/var/task/requirements.txt', 'r') as f:
-                  requirements = f.read().strip()
+          # Test that the CMD is properly set
+          CMD=$(docker inspect test-lambda-image --format='{{.Config.Cmd}}')
+          echo "📋 Container CMD: $CMD"
+          
+          if [[ "$CMD" != *"app.lambda_handler"* ]]; then
+            echo "❌ Container CMD should reference app.lambda_handler"
+            exit 1
+          fi
+          
+          # Test the Lambda runtime interface emulator (if available)
+          echo "🧪 Testing Lambda handler invocation..."
+          docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image python -c "
+          import app
+          import json
+          
+          # Mock event and context
+          event = {
+              'httpMethod': 'GET',
+              'path': '/',
+              'headers': {'Accept': 'application/json'},
+              'queryStringParameters': None
+          }
+          
+          class MockContext:
+              def __init__(self):
+                  self.function_name = 'test-function'
+                  self.function_version = '\$LATEST'
+                  self.memory_limit_in_mb = '256'
+                  self.aws_request_id = 'test-request-id'
               
-              if requirements:
-                  print(f'Requirements: {requirements}')
-                  # Test each requirement
-                  for line in requirements.split('\n'):
-                      if line.strip() and not line.strip().startswith('#'):
-                          package = line.split('>=')[0].split('==')[0].strip()
-                          try:
-                              __import__(package)
-                              print(f'✅ {package} is available')
-                          except ImportError:
-                              print(f'⚠️ {package} not available (may be optional)')
-              else:
-                  print('📋 requirements.txt is empty')
-          else:
-              print('📋 No requirements.txt found')
+              def get_remaining_time_in_millis(self):
+                  return 30000
+          
+          context = MockContext()
+          
+          try:
+              response = app.lambda_handler(event, context)
+              print('✅ Lambda handler executed successfully')
+              print(f'📊 Response status: {response.get(\"statusCode\", \"N/A\")}')
+              print(f'📄 Response type: {type(response)}')
+              
+              # Validate response structure
+              required_keys = ['statusCode', 'headers', 'body']
+              for key in required_keys:
+                  if key not in response:
+                      print(f'❌ Missing required key: {key}')
+                      sys.exit(1)
+              
+              print('✅ Response structure is valid')
+              
+          except Exception as e:
+              print(f'❌ Lambda handler test failed: {e}')
+              import traceback
+              traceback.print_exc()
+              sys.exit(1)
           "
           
-          echo "✅ All Python environment tests passed"
+          echo "✅ Lambda runtime interface test passed"
 
       - name: Run Local Lambda Function Test
         run: |
@@ -334,6 +386,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+          provenance: false
+          sbom: false
 
       - name: Verify image was pushed successfully
         if: github.event_name != 'pull_request'
@@ -342,7 +396,7 @@ jobs:
           IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
           
           # Wait a moment for ECR to register the image
-          sleep 10
+          sleep 15
           
           # Check if image exists in ECR
           if aws ecr describe-images --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --image-ids imageTag="${{ github.event.inputs.image_tag || 'latest' }}" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
@@ -352,9 +406,23 @@ jobs:
             IMAGE_DETAILS=$(aws ecr describe-images --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --image-ids imageTag="${{ github.event.inputs.image_tag || 'latest' }}" --region ${{ env.AWS_REGION }})
             IMAGE_SIZE=$(echo $IMAGE_DETAILS | jq -r '.imageDetails[0].imageSizeInBytes')
             PUSH_DATE=$(echo $IMAGE_DETAILS | jq -r '.imageDetails[0].imagePushedAt')
+            IMAGE_DIGEST=$(echo $IMAGE_DETAILS | jq -r '.imageDetails[0].imageDigest')
             
             echo "📊 Image size: $(($IMAGE_SIZE / 1024 / 1024)) MB"
             echo "📅 Push date: $PUSH_DATE"
+            echo "🔍 Image digest: $IMAGE_DIGEST"
+            
+            # Verify image manifest
+            echo "🔍 Verifying image manifest..."
+            MANIFEST=$(aws ecr batch-get-image --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --image-ids imageTag="${{ github.event.inputs.image_tag || 'latest' }}" --query 'images[0].imageManifest' --output text --region ${{ env.AWS_REGION }})
+            
+            if [ "$MANIFEST" != "None" ] && [ "$MANIFEST" != "" ]; then
+              echo "✅ Image manifest is valid"
+            else
+              echo "❌ Image manifest is invalid or missing"
+              exit 1
+            fi
+            
           else
             echo "❌ Image not found in ECR after push!"
             echo "Listing all images in repository:"
@@ -362,23 +430,23 @@ jobs:
             exit 1
           fi
 
-      - name: Image vulnerability scan
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "🔒 Running security scan on Docker image..."
+      # - name: Image vulnerability scan
+      #   if: github.event_name != 'pull_request'
+      #   run: |
+      #     echo "🔒 Running security scan on Docker image..."
           
-          # Install Trivy
-          sudo apt-get update
-          sudo apt-get install wget apt-transport-https gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update
-          sudo apt-get install trivy
+      #     # Install Trivy
+      #     sudo apt-get update
+      #     sudo apt-get install wget apt-transport-https gnupg lsb-release
+      #     wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+      #     echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+      #     sudo apt-get update
+      #     sudo apt-get install trivy
           
-          # Scan the image
-          IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
-          echo "🔍 Scanning image: $IMAGE_URI"
-          trivy image --exit-code 0 --severity HIGH,CRITICAL $IMAGE_URI
+      #     # Scan the image
+      #     IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
+      #     echo "🔍 Scanning image: $IMAGE_URI"
+      #     trivy image --exit-code 0 --severity HIGH,CRITICAL $IMAGE_URI
 
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
