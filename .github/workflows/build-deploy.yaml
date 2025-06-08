@@ -117,6 +117,18 @@ jobs:
           # Scan the image
           trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
 
+      - name: Verify image exists
+        if: github.event_name != 'pull_request'
+        run: |
+          # Wait a moment for image to be available
+          sleep 10
+          
+          # Verify the image exists in ECR
+          aws ecr describe-images \
+            --repository-name hello-world-lambda-${{ github.event.inputs.environment || 'dev' }} \
+            --image-ids imageTag=${{ github.event.inputs.image_tag || 'latest' }} \
+            --region ${{ env.AWS_REGION }}
+
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
 
@@ -141,7 +153,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.12.0
+          terraform_version: 1.6.0
           terraform_wrapper: false
 
       - name: Terraform Init
@@ -155,14 +167,13 @@ jobs:
           terraform plan \
             -var="aws_region=${{ env.AWS_REGION }}" \
             -var="image_tag=${{ github.event.inputs.image_tag || 'latest' }}" \
-            -detailed-exitcode \
             -out=tfplan
           echo "plan_exitcode=$?" >> $GITHUB_OUTPUT
 
       - name: Terraform Apply
         if: github.event_name != 'pull_request'
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
-        run: terraform apply tfplan
+        run: terraform apply -auto-approve tfplan
 
       - name: Get Deployment Outputs
         if: github.event_name != 'pull_request'
