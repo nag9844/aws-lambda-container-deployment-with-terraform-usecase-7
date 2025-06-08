@@ -51,7 +51,6 @@ jobs:
           role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
           role-session-name: GitHubActions-Build-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
-      
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -101,17 +100,67 @@ jobs:
           docker build -t test-lambda-image .
           echo "✅ Local build successful"
 
-      - name: Test Docker image locally
+      - name: Test Docker image components
         run: |
-          echo "🧪 Testing Docker image locally..."
+          echo "🧪 Testing Docker image components..."
           
-          # Test that the image can run
-          docker run --rm test-lambda-image python -c "import app; print('✅ App module imports successfully')"
+          # Test that Python modules can be imported
+          echo "📦 Testing Python module imports..."
+          docker run --rm test-lambda-image python -c "
+          try:
+              import app
+              print('✅ App module imports successfully')
+          except Exception as e:
+              print(f'❌ App module import failed: {e}')
+              exit(1)
+          "
           
           # Test that boto3 is available
-          docker run --rm test-lambda-image python -c "import boto3; print('✅ boto3 is available')"
+          echo "🔧 Testing boto3 availability..."
+          docker run --rm test-lambda-image python -c "
+          try:
+              import boto3
+              print('✅ boto3 is available')
+          except Exception as e:
+              print(f'❌ boto3 import failed: {e}')
+              exit(1)
+          "
           
-          echo "✅ Local image tests passed"
+          # Test that the handler function exists and is callable
+          echo "🎯 Testing Lambda handler function..."
+          docker run --rm test-lambda-image python -c "
+          try:
+              import app
+              if hasattr(app, 'lambda_handler'):
+                  print('✅ lambda_handler function exists')
+                  # Test with minimal event/context
+                  class MockContext:
+                      def __init__(self):
+                          self.function_name = 'test'
+                          self.function_version = '1'
+                          self.memory_limit_in_mb = 256
+                          self.aws_request_id = 'test-request-id'
+                      def get_remaining_time_in_millis(self):
+                          return 30000
+                  
+                  test_event = {'httpMethod': 'GET', 'path': '/'}
+                  test_context = MockContext()
+                  result = app.lambda_handler(test_event, test_context)
+                  
+                  if 'statusCode' in result and result['statusCode'] == 200:
+                      print('✅ lambda_handler function works correctly')
+                  else:
+                      print(f'❌ lambda_handler returned unexpected result: {result}')
+                      exit(1)
+              else:
+                  print('❌ lambda_handler function not found')
+                  exit(1)
+          except Exception as e:
+              print(f'❌ Handler test failed: {e}')
+              exit(1)
+          "
+          
+          echo "✅ All Docker image tests passed"
 
       - name: Build and push Docker image to ECR
         uses: docker/build-push-action@v5
@@ -137,6 +186,14 @@ jobs:
           # Check if image exists in ECR
           if aws ecr describe-images --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --image-ids imageTag="${{ github.event.inputs.image_tag || 'latest' }}" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
             echo "✅ Image successfully pushed to ECR: $IMAGE_URI"
+            
+            # Get image details
+            IMAGE_DETAILS=$(aws ecr describe-images --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --image-ids imageTag="${{ github.event.inputs.image_tag || 'latest' }}" --region ${{ env.AWS_REGION }})
+            IMAGE_SIZE=$(echo $IMAGE_DETAILS | jq -r '.imageDetails[0].imageSizeInBytes')
+            PUSH_DATE=$(echo $IMAGE_DETAILS | jq -r '.imageDetails[0].imagePushedAt')
+            
+            echo "📊 Image size: $(($IMAGE_SIZE / 1024 / 1024)) MB"
+            echo "📅 Push date: $PUSH_DATE"
           else
             echo "❌ Image not found in ECR after push!"
             echo "Listing all images in repository:"
