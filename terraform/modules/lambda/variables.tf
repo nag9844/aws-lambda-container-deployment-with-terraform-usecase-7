@@ -8,6 +8,11 @@ variable "environment" {
   type        = string
 }
 
+variable "image_uri" {
+  description = "URI of the container image in ECR"
+  type        = string
+}
+
 variable "timeout" {
   description = "The amount of time your Lambda Function has to run in seconds"
   type        = number
@@ -80,6 +85,12 @@ variable "function_url_cors" {
     max_age          = number
   })
   default = null
+}
+
+variable "api_gateway_arn" {
+  description = "ARN of the API Gateway to allow invocation from"
+  type        = string
+  default     = null
 }
 
 variable "create_alias" {

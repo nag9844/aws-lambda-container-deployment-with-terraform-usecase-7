@@ -26,7 +26,6 @@ on:
       - main
     paths:
       - 'terraform/**'
-      - 'src/**'
   pull_request:
     branches:
       - main
@@ -54,8 +53,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
+        with:
+          terraform_version: 1.6.0
 
       - name: Terraform Format Check
         run: |
@@ -89,9 +88,9 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
-        #   terraform_wrapper: false
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
@@ -146,12 +145,13 @@ jobs:
               body: comment
             });
 
-  # Deploy Infrastructure with ZIP-based Lambda
-  deploy-infrastructure:
-    name: Deploy Infrastructure (ZIP)
+  # Separate apply job for push events (with validation dependency)
+  terraform-apply-push:
+    name: Terraform Apply (Auto)
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [terraform-validate]
     
     steps:
       - name: Checkout code
@@ -165,9 +165,9 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
-        #   terraform_wrapper: false
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
@@ -188,79 +188,21 @@ jobs:
         run: |
           API_URL=$(terraform output -raw api_gateway_url 2>/dev/null || echo "")
           LAMBDA_ARN=$(terraform output -raw lambda_function_arn 2>/dev/null || echo "")
-          LAMBDA_NAME=$(terraform output -raw lambda_function_name 2>/dev/null || echo "")
-          LAMBDA_URL=$(terraform output -raw lambda_function_url 2>/dev/null || echo "")
-          DEPLOYMENT_TYPE=$(terraform output -raw deployment_type 2>/dev/null || echo "zip")
-          PACKAGE_TYPE=$(terraform output -raw package_type 2>/dev/null || echo "Zip")
-          
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
           echo "lambda_arn=$LAMBDA_ARN" >> $GITHUB_OUTPUT
-          echo "lambda_name=$LAMBDA_NAME" >> $GITHUB_OUTPUT
-          echo "lambda_url=$LAMBDA_URL" >> $GITHUB_OUTPUT
-          echo "deployment_type=$DEPLOYMENT_TYPE" >> $GITHUB_OUTPUT
-          echo "package_type=$PACKAGE_TYPE" >> $GITHUB_OUTPUT
 
-      - name: Test ZIP Deployment
+      - name: Test Deployment
         if: steps.outputs.outputs.api_url != ''
         run: |
-          echo "🧪 Testing ZIP-based Lambda deployment..."
-          echo "🌐 API Gateway URL: ${{ steps.outputs.outputs.api_url }}"
-          echo "🔗 Lambda Function URL: ${{ steps.outputs.outputs.lambda_url }}"
-          echo "📦 Deployment Type: ${{ steps.outputs.outputs.deployment_type }}"
-          echo "📋 Package Type: ${{ steps.outputs.outputs.package_type }}"
-          
-          # Wait for API Gateway to be ready
-          sleep 15
-          
-          # Test API Gateway endpoint
-          echo "🔍 Testing API Gateway endpoint..."
-          API_RESPONSE=$(curl -s -w "\n%{http_code}" "${{ steps.outputs.outputs.api_url }}")
-          API_HTTP_CODE=$(echo "$API_RESPONSE" | tail -n1)
-          API_BODY=$(echo "$API_RESPONSE" | head -n -1)
-          
-          echo "📊 API Gateway HTTP Status: $API_HTTP_CODE"
-          
-          if [ "$API_HTTP_CODE" = "200" ]; then
-            echo "✅ API Gateway test successful!"
-            echo "📄 Response: $API_BODY"
-          else
-            echo "⚠️ API Gateway test returned HTTP $API_HTTP_CODE"
-          fi
-          
-          # Test Lambda Function URL if available
-          if [ -n "${{ steps.outputs.outputs.lambda_url }}" ]; then
-            echo "🔍 Testing Lambda Function URL..."
-            LAMBDA_RESPONSE=$(curl -s -w "\n%{http_code}" "${{ steps.outputs.outputs.lambda_url }}")
-            LAMBDA_HTTP_CODE=$(echo "$LAMBDA_RESPONSE" | tail -n1)
-            LAMBDA_BODY=$(echo "$LAMBDA_RESPONSE" | head -n -1)
-            
-            echo "📊 Lambda Function URL HTTP Status: $LAMBDA_HTTP_CODE"
-            
-            if [ "$LAMBDA_HTTP_CODE" = "200" ]; then
-              echo "✅ Lambda Function URL test successful!"
-              echo "📄 Response: $LAMBDA_BODY"
-            else
-              echo "⚠️ Lambda Function URL test returned HTTP $LAMBDA_HTTP_CODE"
-            fi
-          fi
-          
-          echo ""
-          echo "🎉 ZIP deployment completed successfully!"
-          echo "🌐 Your function is live at:"
-          echo "   - API Gateway: ${{ steps.outputs.outputs.api_url }}"
-          if [ -n "${{ steps.outputs.outputs.lambda_url }}" ]; then
-            echo "   - Function URL: ${{ steps.outputs.outputs.lambda_url }}"
-          fi
+          echo "Testing API Gateway endpoint..."
+          curl -f "${{ steps.outputs.outputs.api_url }}" || exit 1
+          echo "Deployment test successful!"
 
     outputs:
       api_url: ${{ steps.outputs.outputs.api_url }}
       lambda_arn: ${{ steps.outputs.outputs.lambda_arn }}
-      lambda_name: ${{ steps.outputs.outputs.lambda_name }}
-      lambda_url: ${{ steps.outputs.outputs.lambda_url }}
-      deployment_type: ${{ steps.outputs.outputs.deployment_type }}
-      package_type: ${{ steps.outputs.outputs.package_type }}
 
-  # Manual apply job for workflow dispatch
+  # Separate apply job for manual workflow dispatch (no dependencies)
   terraform-apply-manual:
     name: Terraform Apply (Manual)
     runs-on: ubuntu-latest
@@ -279,9 +221,9 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
-        #   terraform_wrapper: false
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
@@ -334,8 +276,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
+        with:
+          terraform_version: 1.6.0
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}

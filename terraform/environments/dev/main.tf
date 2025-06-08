@@ -56,12 +56,13 @@ module "vpc" {
   enable_flow_logs   = false  # Disabled for dev to save costs
 }
 
-# Lambda Module (ZIP deployment)
+# Lambda Module
 module "lambda" {
   source = "../../modules/lambda"
 
   project_name = var.project_name
   environment  = local.environment
+  image_uri    = var.lambda_image_uri != "" ? var.lambda_image_uri : "${data.aws_ecr_repository.main.repository_url}:latest"
   timeout      = 30
   memory_size  = 256
 
@@ -97,8 +98,6 @@ module "api_gateway" {
   log_retention_days = 7  # Shorter retention for dev
   enable_metrics     = true
   logging_level      = "INFO"
-
-  depends_on = [module.lambda]
 }
 
 # Lambda permission for API Gateway

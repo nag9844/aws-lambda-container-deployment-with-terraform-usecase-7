@@ -1,18 +1,13 @@
-# Lambda Module - Create Lambda function with ZIP deployment
+# Lambda Module - Create Lambda function with container image
 
-# Lambda function with ZIP deployment
+# Lambda function
 resource "aws_lambda_function" "main" {
   function_name = "${var.project_name}-${var.environment}"
   role          = aws_iam_role.lambda_execution.arn
-  package_type  = "Zip"
+  package_type  = "Image"
+  image_uri     = var.image_uri
   timeout       = var.timeout
   memory_size   = var.memory_size
-
-  # ZIP deployment configuration
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-  handler          = "app.lambda_handler"
-  runtime          = "python3.11"
 
   dynamic "vpc_config" {
     for_each = var.vpc_config != null ? [var.vpc_config] : []
@@ -37,11 +32,9 @@ resource "aws_lambda_function" "main" {
   }
 
   tags = {
-    Name           = "${var.project_name}-lambda-${var.environment}"
-    Environment    = var.environment
-    Project        = var.project_name
-    DeploymentType = "zip"
-    PackageType    = "Zip"
+    Name        = "${var.project_name}-lambda-${var.environment}"
+    Environment = var.environment
+    Project     = var.project_name
   }
 
   depends_on = [
@@ -49,17 +42,6 @@ resource "aws_lambda_function" "main" {
     aws_iam_role_policy_attachment.lambda_vpc_access,
     aws_cloudwatch_log_group.lambda
   ]
-}
-
-# Create Lambda deployment package from source code
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  output_path = "${path.module}/lambda_function.zip"
-  
-  source {
-    content = file("${path.root}/../../src/app.py")
-    filename = "app.py"
-  }
 }
 
 # CloudWatch Log Group
@@ -137,6 +119,16 @@ resource "aws_lambda_function_url" "main" {
       max_age          = cors.value.max_age
     }
   }
+}
+
+# Lambda permission for API Gateway (if api_gateway_arn is provided)
+resource "aws_lambda_permission" "api_gateway" {
+  count         = var.api_gateway_arn != null ? 1 : 0
+  statement_id  = "AllowExecutionFromAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.main.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_gateway_arn}/*/*"
 }
 
 # Lambda alias for versioning

@@ -3,8 +3,8 @@ output "vpc_id" {
   value       = module.vpc.vpc_id
 }
 
-output "ecr_repository_url" {
-  description = "URL of the ECR repository (from existing repository)"
+output "ecr_repository_uri" {
+  description = "URI of the ECR repository (from existing repository)"
   value       = data.aws_ecr_repository.main.repository_url
 }
 
@@ -38,26 +38,14 @@ output "monitoring_dashboard_url" {
   value       = module.monitoring.dashboard_url
 }
 
-output "deployment_type" {
-  description = "Type of Lambda deployment (always zip)"
-  value       = "zip"
-}
-
-output "package_type" {
-  description = "Package type of the Lambda function"
-  value       = "Zip"
-}
-
 # Output summary for easy access
 output "deployment_summary" {
   description = "Summary of deployed resources"
   value = {
-    environment            = "dev"
-    api_gateway_url       = module.api_gateway.api_url
-    lambda_function_url   = module.lambda.function_url
-    ecr_repository_url    = data.aws_ecr_repository.main.repository_url
-    dashboard_url         = module.monitoring.dashboard_url
-    deployment_type       = "zip"
-    package_type          = "Zip"
+    environment           = "dev"
+    api_gateway_url      = module.api_gateway.api_url
+    lambda_function_url  = module.lambda.function_url
+    ecr_repository_uri   = data.aws_ecr_repository.main.repository_url
+    dashboard_url        = module.monitoring.dashboard_url
   }
 }

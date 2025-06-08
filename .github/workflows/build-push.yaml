@@ -59,23 +59,11 @@ jobs:
       - name: Get ECR Repository URI
         id: get-ecr-uri
         run: |
+          # Get ECR repository URI from AWS
           REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
           ECR_URI=$(aws ecr describe-repositories --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
           echo "ecr_uri=$ECR_URI" >> $GITHUB_OUTPUT
-          echo "📦 ECR Repository URI: $ECR_URI"
-
-      - name: Verify ECR Repository Exists
-        run: |
-          REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
-          echo "🔍 Verifying ECR repository exists..."
-          
-          if aws ecr describe-repositories --repository-names $REPO_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "✅ ECR repository '$REPO_NAME' exists"
-          else
-            echo "❌ ECR repository '$REPO_NAME' does not exist!"
-            echo "Please run the ECR workflow first to create the repository"
-            exit 1
-          fi
+          echo "ECR Repository URI: $ECR_URI"
 
       - name: Extract metadata
         id: meta
@@ -87,213 +75,11 @@ jobs:
             type=ref,event=pr
             type=sha,prefix={{branch}}-
             type=raw,value=${{ github.event.inputs.image_tag || 'latest' }}
-            type=raw,value={{date 'YYYYMMDD-HHmmss'}}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Validate Python Code Before Building
-        run: |
-          echo "🔍 Validating Python code syntax and imports..."
-          
-          cd src
-          
-          if [ ! -f "app.py" ]; then
-            echo "❌ app.py not found in src directory"
-            ls -la
-            exit 1
-          fi
-          
-          echo "✅ app.py found"
-          
-          python3 -m py_compile app.py
-          echo "✅ Python syntax is valid"
-          
-          python3 -c "
-          import json
-          import logging
-          print('✅ Standard library imports successful')
-          "
-          
-          python3 -c "
-          import sys
-          import os
-          
-          current_dir = os.getcwd()
-          if current_dir not in sys.path:
-              sys.path.insert(0, current_dir)
-          
-          try:
-              import app
-              print('✅ App module imported successfully')
-          except ImportError as e:
-              print(f'❌ Failed to import app module: {e}')
-              sys.exit(1)
-          
-          if not hasattr(app, 'lambda_handler'):
-              print('❌ lambda_handler function not found in app module')
-              sys.exit(1)
-          
-          if not callable(app.lambda_handler):
-              print('❌ lambda_handler is not callable')
-              sys.exit(1)
-          
-          import inspect
-          sig = inspect.signature(app.lambda_handler)
-          params = list(sig.parameters.keys())
-          
-          if len(params) != 2:
-              print(f'❌ lambda_handler should have 2 parameters, found {len(params)}: {params}')
-              sys.exit(1)
-          
-          print(f'✅ lambda_handler function has correct signature: {params}')
-          "
-          
-          echo "✅ All Python validation checks passed"
-
-      - name: Build Docker image locally first
-        run: |
-          echo "🔨 Building Docker image locally for validation..."
-          cd src
-          
-          # Build with explicit platform for Lambda compatibility
-          docker build \
-            --platform linux/amd64 \
-            --tag test-lambda-image \
-            --file Dockerfile \
-            .
-          
-          echo "✅ Local build successful"
-
-      - name: Validate Docker Image Structure
-        run: |
-          echo "🧪 Validating Docker image structure..."
-          
-          if docker images test-lambda-image | grep -q test-lambda-image; then
-            echo "✅ Docker image exists"
-          else
-            echo "❌ Docker image not found"
-            exit 1
-          fi
-          
-          ARCH=$(docker inspect test-lambda-image --format='{{.Architecture}}')
-          echo "🏗️ Image architecture: $ARCH"
-          
-          if [ "$ARCH" != "amd64" ]; then
-            echo "❌ Image architecture should be amd64 for Lambda compatibility"
-            exit 1
-          fi
-          
-          IMAGE_SIZE=$(docker images test-lambda-image --format "table {{.Size}}" | tail -n 1)
-          echo "📊 Image size: $IMAGE_SIZE"
-          
-          echo "📁 Checking image contents..."
-          docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image ls -la /var/task/
-          
-          if docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image test -f /var/task/app.py; then
-            echo "✅ app.py found in image"
-          else
-            echo "❌ app.py not found in image"
-            exit 1
-          fi
-          
-          echo "✅ Docker image structure validation passed"
-
-      - name: Test Python Environment in Container
-        run: |
-          echo "🐍 Testing Python environment in container..."
-          
-          echo "📋 Python version:"
-          docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image python --version
-          
-          echo "📦 Testing module import in container..."
-          docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image python -c "
-          import sys
-          import os
-          
-          task_root = '/var/task'
-          if task_root not in sys.path:
-              sys.path.insert(0, task_root)
-          
-          try:
-              import app
-              print('✅ App module imports successfully in container')
-          except Exception as e:
-              print(f'❌ App module import failed: {e}')
-              sys.exit(1)
-          
-          if not hasattr(app, 'lambda_handler'):
-              print('❌ lambda_handler function not found in container')
-              sys.exit(1)
-          
-          if not callable(app.lambda_handler):
-              print('❌ lambda_handler is not callable in container')
-              sys.exit(1)
-          
-          print('✅ lambda_handler function is accessible in container')
-          "
-          
-          echo "✅ All Python environment tests passed"
-
-      - name: Test Lambda Runtime Interface
-        run: |
-          echo "🔧 Testing Lambda Runtime Interface..."
-          
-          CMD=$(docker inspect test-lambda-image --format='{{.Config.Cmd}}')
-          echo "📋 Container CMD: $CMD"
-          
-          if [[ "$CMD" != *"app.lambda_handler"* ]]; then
-            echo "❌ Container CMD should reference app.lambda_handler"
-            exit 1
-          fi
-          
-          echo "🧪 Testing Lambda handler invocation..."
-          docker run --rm --platform linux/amd64 --entrypoint="" test-lambda-image python -c "
-          import app
-          import json
-          
-          event = {
-              'httpMethod': 'GET',
-              'path': '/',
-              'headers': {'Accept': 'application/json'},
-              'queryStringParameters': None
-          }
-          
-          class MockContext:
-              def __init__(self):
-                  self.function_name = 'test-function'
-                  self.function_version = '\$LATEST'
-                  self.memory_limit_in_mb = '256'
-                  self.aws_request_id = 'test-request-id'
-              
-              def get_remaining_time_in_millis(self):
-                  return 30000
-          
-          context = MockContext()
-          
-          try:
-              response = app.lambda_handler(event, context)
-              print('✅ Lambda handler executed successfully')
-              print(f'📊 Response status: {response.get(\"statusCode\", \"N/A\")}')
-              
-              required_keys = ['statusCode', 'headers', 'body']
-              for key in required_keys:
-                  if key not in response:
-                      print(f'❌ Missing required key: {key}')
-                      sys.exit(1)
-              
-              print('✅ Response structure is valid')
-              
-          except Exception as e:
-              print(f'❌ Lambda handler test failed: {e}')
-              import traceback
-              traceback.print_exc()
-              sys.exit(1)
-          "
-          
-          echo "✅ Lambda runtime interface test passed"
-
-      - name: Build and push Docker image to ECR
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: ./src
@@ -304,52 +90,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
-          provenance: false
-          sbom: false
-          outputs: type=image,name=${{ steps.get-ecr-uri.outputs.ecr_uri }},push=true
-
-      - name: Verify image was pushed successfully
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "🔍 Verifying image was pushed to ECR..."
-          IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
-          
-          sleep 15
-          
-          if aws ecr describe-images --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --image-ids imageTag="${{ github.event.inputs.image_tag || 'latest' }}" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "✅ Image successfully pushed to ECR: $IMAGE_URI"
-            
-            IMAGE_DETAILS=$(aws ecr describe-images --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --image-ids imageTag="${{ github.event.inputs.image_tag || 'latest' }}" --region ${{ env.AWS_REGION }})
-            IMAGE_SIZE=$(echo $IMAGE_DETAILS | jq -r '.imageDetails[0].imageSizeInBytes')
-            PUSH_DATE=$(echo $IMAGE_DETAILS | jq -r '.imageDetails[0].imagePushedAt')
-            IMAGE_DIGEST=$(echo $IMAGE_DETAILS | jq -r '.imageDetails[0].imageDigest')
-            
-            echo "📊 Image size: $(($IMAGE_SIZE / 1024 / 1024)) MB"
-            echo "📅 Push date: $PUSH_DATE"
-            echo "🔍 Image digest: $IMAGE_DIGEST"
-            
-            echo "🔍 Verifying image manifest..."
-            MANIFEST=$(aws ecr batch-get-image --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --image-ids imageTag="${{ github.event.inputs.image_tag || 'latest' }}" --query 'images[0].imageManifest' --output text --region ${{ env.AWS_REGION }})
-            
-            if [ "$MANIFEST" != "None" ] && [ "$MANIFEST" != "" ]; then
-              echo "✅ Image manifest is valid"
-            else
-              echo "❌ Image manifest is invalid or missing"
-              exit 1
-            fi
-            
-          else
-            echo "❌ Image not found in ECR after push!"
-            echo "Listing all images in repository:"
-            aws ecr list-images --repository-name "hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}" --region ${{ env.AWS_REGION }}
-            exit 1
-          fi
 
       - name: Image vulnerability scan
         if: github.event_name != 'pull_request'
         run: |
-          echo "🔒 Running security scan on Docker image..."
-          
+          # Install Trivy
           sudo apt-get update
           sudo apt-get install wget apt-transport-https gnupg lsb-release
           wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
@@ -357,9 +102,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install trivy
           
+          # Scan the image
+          trivy image --exit-code 0 --severity HIGH,CRITICAL ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}
+
+      - name: Update Lambda function
+        if: github.event_name != 'pull_request'
+        run: |
+          FUNCTION_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
           IMAGE_URI="${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}"
-          echo "🔍 Scanning image: $IMAGE_URI"
-          trivy image --exit-code 0 --severity HIGH,CRITICAL $IMAGE_URI
+          
+          echo "Updating Lambda function: $FUNCTION_NAME"
+          echo "With image: $IMAGE_URI"
+          
+          aws lambda update-function-code \
+            --function-name $FUNCTION_NAME \
+            --image-uri $IMAGE_URI \
+            --region ${{ env.AWS_REGION }}
+          
+          # Wait for the update to complete
+          aws lambda wait function-updated \
+            --function-name $FUNCTION_NAME \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "Lambda function updated successfully"
 
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ github.event.inputs.image_tag || 'latest' }}

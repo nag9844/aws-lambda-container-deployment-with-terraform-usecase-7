@@ -42,13 +42,3 @@ output "log_group_arn" {
   description = "ARN of the CloudWatch log group"
   value       = aws_cloudwatch_log_group.lambda.arn
 }
-
-output "deployment_type" {
-  description = "Type of deployment (always zip for this module)"
-  value       = "zip"
-}
-
-output "package_type" {
-  description = "Package type of the Lambda function"
-  value       = aws_lambda_function.main.package_type
-}

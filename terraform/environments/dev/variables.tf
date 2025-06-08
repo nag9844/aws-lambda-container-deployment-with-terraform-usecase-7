@@ -21,3 +21,9 @@ variable "az_count" {
   type        = number
   default     = 2
 }
+
+variable "lambda_image_uri" {
+  description = "URI of the Lambda container image"
+  type        = string
+  default     = ""
+}
