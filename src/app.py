@@ -12,5 +12,5 @@ def handler(event, context):
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type'
         },
-        'body': 'Hello World'
+        'body': 'Hello World!'
     }
