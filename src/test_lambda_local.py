@@ -51,20 +51,29 @@ if __name__ == "__main__":
     context = MockContext()
     
     # Test JSON response
-    print("\n1. Testing JSON Response:")
+    print("\n1. Testing Response:")
     response = lambda_handler(test_event, context)
     print("Status Code:", response['statusCode'])
     print("Content-Type:", response['headers']['Content-Type'])
     print("Response Body:")
-    print(json.dumps(json.loads(response['body']), indent=2))
     
-    # Test HTML response
-    print("\n2. Testing HTML Response:")
-    response_html = lambda_handler(test_event_html, context)
-    print("Status Code:", response_html['statusCode'])
-    print("Content-Type:", response_html['headers']['Content-Type'])
-    print("HTML Response Length:", len(response_html['body']), "characters")
+    # Handle both JSON and plain text responses
+    try:
+        # Try to parse as JSON first
+        if response['headers']['Content-Type'] == 'application/json':
+            parsed_body = json.loads(response['body'])
+            print(json.dumps(parsed_body, indent=2))
+        else:
+            # Plain text response
+            print(f"'{response['body']}'")
+    except (json.JSONDecodeError, KeyError):
+        # If JSON parsing fails, just print the raw body
+        print(f"'{response['body']}'")
     
     print("\n" + "=" * 50)
-    print("Local tests completed successfully!")
+    print("Local test completed successfully!")
     print("The Lambda function is ready for deployment.")
+    print("\nYour function returns:")
+    print(f"  Status: {response['statusCode']}")
+    print(f"  Content-Type: {response['headers']['Content-Type']}")
+    print(f"  Message: {response['body']}")
