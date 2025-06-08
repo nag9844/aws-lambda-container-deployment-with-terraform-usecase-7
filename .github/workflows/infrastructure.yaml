@@ -21,6 +21,11 @@ on:
         - plan
         - apply
         - destroy
+      force_container_deployment:
+        description: 'Force container deployment even if no image exists'
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -53,8 +58,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
+        with:
+          terraform_version: 1.6.0
 
       - name: Terraform Format Check
         run: |
@@ -69,6 +74,65 @@ jobs:
             terraform validate
             cd - > /dev/null
           done
+
+  # Build and push container image first (for push events)
+  build-and-push:
+    name: Build and Push Container Image
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::199570228070:role/oidc-demo-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get ECR Repository URI
+        id: get-ecr-uri
+        run: |
+          # Get ECR repository URI from AWS
+          REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
+          ECR_URI=$(aws ecr describe-repositories --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
+          echo "ecr_uri=$ECR_URI" >> $GITHUB_OUTPUT
+          echo "ECR Repository URI: $ECR_URI"
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.get-ecr-uri.outputs.ecr_uri }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src
+          file: ./src/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+    outputs:
+      image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:latest
 
   terraform-plan:
     name: Terraform Plan
@@ -88,9 +152,9 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        # with:
-        #   terraform_version: 1.6.0
-        #   terraform_wrapper: false
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
@@ -151,7 +215,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [terraform-validate]
+    needs: [terraform-validate, build-and-push]
     
     steps:
       - name: Checkout code

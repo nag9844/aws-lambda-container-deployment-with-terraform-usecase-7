@@ -10,17 +10,17 @@ output "ecr_repository_url" {
 
 output "lambda_function_arn" {
   description = "ARN of the Lambda function"
-  value       = module.lambda.function_arn
+  value       = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_arn : aws_lambda_function.placeholder[0].arn
 }
 
 output "lambda_function_name" {
   description = "Name of the Lambda function"
-  value       = module.lambda.function_name
+  value       = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_name : aws_lambda_function.placeholder[0].function_name
 }
 
 output "lambda_function_url" {
   description = "Function URL of the Lambda function"
-  value       = module.lambda.function_url
+  value       = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_url : null
 }
 
 output "api_gateway_url" {
@@ -38,14 +38,21 @@ output "monitoring_dashboard_url" {
   value       = module.monitoring.dashboard_url
 }
 
+output "container_image_available" {
+  description = "Whether container image is available in ECR"
+  value       = length(data.aws_ecr_repository_images.main.image_ids) > 0
+}
+
 # Output summary for easy access
 output "deployment_summary" {
   description = "Summary of deployed resources"
   value = {
-    environment           = "dev"
-    api_gateway_url      = module.api_gateway.api_url
-    lambda_function_url  = module.lambda.function_url
-    ecr_repository_url   = data.aws_ecr_repository.main.repository_url
-    dashboard_url        = module.monitoring.dashboard_url
+    environment            = "dev"
+    api_gateway_url       = module.api_gateway.api_url
+    lambda_function_url   = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_url : null
+    ecr_repository_url    = data.aws_ecr_repository.main.repository_url
+    dashboard_url         = module.monitoring.dashboard_url
+    container_image_ready = length(data.aws_ecr_repository_images.main.image_ids) > 0
+    deployment_type       = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? "container" : "placeholder"
   }
 }

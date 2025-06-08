@@ -44,6 +44,75 @@ data "aws_ecr_repository" "main" {
   name = "${var.project_name}-${local.environment}"
 }
 
+# Check if ECR repository has any images
+data "aws_ecr_repository_images" "main" {
+  repository_name = data.aws_ecr_repository.main.name
+}
+
+# Create a placeholder Lambda function with a simple Python runtime first
+# This will be updated later when the container image is available
+resource "aws_lambda_function" "placeholder" {
+  count = length(data.aws_ecr_repository_images.main.image_ids) == 0 ? 1 : 0
+  
+  function_name = "${var.project_name}-${local.environment}"
+  role          = aws_iam_role.lambda_execution.arn
+  handler       = "index.handler"
+  runtime       = "python3.11"
+  timeout       = 30
+  memory_size   = 256
+
+  filename         = "placeholder.zip"
+  source_code_hash = data.archive_file.placeholder[0].output_base64sha256
+
+  environment {
+    variables = {
+      ENVIRONMENT = local.environment
+      LOG_LEVEL   = "DEBUG"
+    }
+  }
+
+  tags = {
+    Name        = "${var.project_name}-lambda-${local.environment}"
+    Environment = local.environment
+    Project     = var.project_name
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.lambda_basic_execution,
+    aws_cloudwatch_log_group.lambda
+  ]
+
+  lifecycle {
+    ignore_changes = [
+      filename,
+      source_code_hash,
+      handler,
+      runtime,
+      package_type,
+      image_uri
+    ]
+  }
+}
+
+# Create placeholder zip file for initial deployment
+data "archive_file" "placeholder" {
+  count = length(data.aws_ecr_repository_images.main.image_ids) == 0 ? 1 : 0
+  
+  type        = "zip"
+  output_path = "placeholder.zip"
+  
+  source {
+    content = <<EOF
+def handler(event, context):
+    return {
+        'statusCode': 200,
+        'body': 'Placeholder function - will be updated with container image'
+    }
+EOF
+    filename = "index.py"
+  }
+}
+
 # VPC Module
 module "vpc" {
   source = "../../modules/vpc"
@@ -56,8 +125,10 @@ module "vpc" {
   enable_flow_logs   = false  # Disabled for dev to save costs
 }
 
-# Lambda Module
+# Lambda Module (only if container image exists)
 module "lambda" {
+  count = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? 1 : 0
+  
   source = "../../modules/lambda"
 
   project_name = var.project_name
@@ -85,19 +156,70 @@ module "lambda" {
   log_retention_days = 7  # Shorter retention for dev
 }
 
+# IAM role for Lambda execution (shared between placeholder and container function)
+resource "aws_iam_role" "lambda_execution" {
+  name = "${var.project_name}-lambda-execution-role-${local.environment}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name        = "${var.project_name}-lambda-role-${local.environment}"
+    Environment = local.environment
+    Project     = var.project_name
+  }
+}
+
+# IAM policy attachment for basic Lambda execution
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  role       = aws_iam_role.lambda_execution.name
+}
+
+# CloudWatch Log Group
+resource "aws_cloudwatch_log_group" "lambda" {
+  name              = "/aws/lambda/${var.project_name}-${local.environment}"
+  retention_in_days = 7
+
+  tags = {
+    Name        = "${var.project_name}-lambda-logs-${local.environment}"
+    Environment = local.environment
+    Project     = var.project_name
+  }
+}
+
 # API Gateway Module
 module "api_gateway" {
   source = "../../modules/api-gateway"
 
   project_name      = var.project_name
   environment       = local.environment
-  lambda_invoke_arn = module.lambda.function_invoke_arn
+  lambda_invoke_arn = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_invoke_arn : aws_lambda_function.placeholder[0].invoke_arn
   stage_name        = "dev"
   
   enable_access_logs = true
   log_retention_days = 7  # Shorter retention for dev
   enable_metrics     = true
   logging_level      = "INFO"
+}
+
+# Lambda permission for API Gateway
+resource "aws_lambda_permission" "api_gateway" {
+  statement_id  = "AllowExecutionFromAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_name : aws_lambda_function.placeholder[0].function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${module.api_gateway.execution_arn}/*/*"
 }
 
 # Monitoring Module
@@ -107,7 +229,7 @@ module "monitoring" {
   project_name         = var.project_name
   environment          = local.environment
   aws_region          = var.aws_region
-  lambda_function_name = module.lambda.function_name
+  lambda_function_name = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_name : aws_lambda_function.placeholder[0].function_name
   api_gateway_name     = "${var.project_name}-api-${local.environment}"
   
   # More lenient thresholds for dev
