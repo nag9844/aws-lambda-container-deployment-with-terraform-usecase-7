@@ -52,3 +52,9 @@ output "container_image_available" {
   description = "Whether container image is available"
   value       = data.external.ecr_images.result.has_images == "true"
 }
+
+output "image_check_result" {
+  description = "Result of the ECR image check"
+  value       = data.external.ecr_images.result
+  sensitive   = false
+}

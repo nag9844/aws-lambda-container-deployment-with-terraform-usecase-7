@@ -1,19 +1,43 @@
 # Lambda Module - Create Lambda function with container image or placeholder
 
-# Check if ECR repository has images using external data source
+# Check if ECR repository has valid images using external data source
 data "external" "ecr_images" {
   program = ["bash", "-c", <<-EOT
     set -e
-    REPO_NAME=$(echo "${var.image_uri}" | cut -d'/' -f2 | cut -d':' -f1)
-    REGION=$(echo "${var.image_uri}" | cut -d'.' -f4)
     
-    # Try to list images and check if any exist
-    IMAGE_COUNT=$(aws ecr list-images --repository-name "$REPO_NAME" --region "$REGION" --query 'length(imageIds)' --output text 2>/dev/null || echo "0")
-    
-    if [ "$IMAGE_COUNT" -gt 0 ]; then
-      echo '{"has_images": "true"}'
+    # Extract repository name and region from image URI
+    if [[ "${var.image_uri}" =~ ([0-9]+)\.dkr\.ecr\.([^.]+)\.amazonaws\.com/([^:]+):(.+) ]]; then
+      ACCOUNT_ID="$${BASH_REMATCH[1]}"
+      REGION="$${BASH_REMATCH[2]}"
+      REPO_NAME="$${BASH_REMATCH[3]}"
+      TAG="$${BASH_REMATCH[4]}"
     else
-      echo '{"has_images": "false"}'
+      echo '{"has_images": "false", "error": "invalid_uri_format"}' >&2
+      echo '{"has_images": "false", "error": "invalid_uri_format"}'
+      exit 0
+    fi
+    
+    # Check if repository exists and has the specific tag
+    if aws ecr describe-images \
+        --repository-name "$REPO_NAME" \
+        --image-ids imageTag="$TAG" \
+        --region "$REGION" \
+        --query 'imageDetails[0].imageTags' \
+        --output text >/dev/null 2>&1; then
+      echo '{"has_images": "true", "repo_name": "'$REPO_NAME'", "tag": "'$TAG'"}'
+    else
+      # Check if repository has any images at all
+      IMAGE_COUNT=$(aws ecr list-images \
+        --repository-name "$REPO_NAME" \
+        --region "$REGION" \
+        --query 'length(imageIds)' \
+        --output text 2>/dev/null || echo "0")
+      
+      if [ "$IMAGE_COUNT" -gt 0 ]; then
+        echo '{"has_images": "false", "reason": "tag_not_found", "repo_name": "'$REPO_NAME'", "tag": "'$TAG'"}'
+      else
+        echo '{"has_images": "false", "reason": "no_images", "repo_name": "'$REPO_NAME'", "tag": "'$TAG'"}'
+      fi
     fi
   EOT
   ]
@@ -156,10 +180,10 @@ resource "aws_lambda_function" "main" {
   # Use container image if available, otherwise use placeholder
   package_type = data.external.ecr_images.result.has_images == "true" ? "Image" : "Zip"
   
-  # Container configuration
+  # Container configuration (only when images are available)
   image_uri = data.external.ecr_images.result.has_images == "true" ? var.image_uri : null
   
-  # Zip configuration for placeholder
+  # Zip configuration for placeholder (only when no images)
   filename         = data.external.ecr_images.result.has_images == "false" ? data.archive_file.placeholder[0].output_path : null
   source_code_hash = data.external.ecr_images.result.has_images == "false" ? data.archive_file.placeholder[0].output_base64sha256 : null
   handler          = data.external.ecr_images.result.has_images == "false" ? "index.lambda_handler" : null
@@ -188,10 +212,11 @@ resource "aws_lambda_function" "main" {
   }
 
   tags = {
-    Name        = "${var.project_name}-lambda-${var.environment}"
-    Environment = var.environment
-    Project     = var.project_name
+    Name           = "${var.project_name}-lambda-${var.environment}"
+    Environment    = var.environment
+    Project        = var.project_name
     DeploymentType = data.external.ecr_images.result.has_images == "true" ? "container" : "placeholder"
+    ImageStatus    = data.external.ecr_images.result.has_images == "true" ? "available" : lookup(data.external.ecr_images.result, "reason", "checking")
   }
 
   depends_on = [
