@@ -39,7 +39,7 @@ env:
 
 permissions:
   id-token: write
-  contents: write
+  contents: read
   pull-requests: write
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
-    if: github.event.inputs.skip_build != 'true' && github.event_name != 'pull_request'
+    if: github.event.inputs.skip_build != 'true'
     
     steps:
       - name: Checkout code
@@ -108,7 +108,7 @@ jobs:
         with:
           context: ./src
           file: ./src/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -116,15 +116,20 @@ jobs:
           platforms: linux/amd64
           provenance: false
           sbom: false
-          no-cache: true
+          no-cache: true  # Force fresh build to avoid caching issues
 
       - name: Verify image compatibility for Lambda
+        if: github.event_name != 'pull_request'
         run: |
+          # Wait a moment for image to be available
           sleep 10
           
+          # Verify the image exists in ECR
+          echo "Verifying image exists in ECR..."
           REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
           IMAGE_TAG="${{ steps.generate-tag.outputs.image_tag }}"
           
+          # Check if image exists
           if aws ecr describe-images \
             --repository-name "$REPO_NAME" \
             --image-ids imageTag="$IMAGE_TAG" \
@@ -135,20 +140,41 @@ jobs:
             exit 1
           fi
           
+          # Get basic image details
           IMAGE_DETAILS=$(aws ecr describe-images \
             --repository-name "$REPO_NAME" \
             --image-ids imageTag="$IMAGE_TAG" \
             --region ${{ env.AWS_REGION }} \
             --query 'imageDetails[0]' --output json)
           
+          echo "Image Details:"
+          echo "$IMAGE_DETAILS" | jq '.'
+          
+          # Check image size (Lambda has limits)
           IMAGE_SIZE=$(echo "$IMAGE_DETAILS" | jq -r '.imageSizeInBytes')
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
           echo "Image Size: ${IMAGE_SIZE_MB} MB"
           
+          # Lambda container image size limit is 10GB, but warn if over 1GB
           if [ "$IMAGE_SIZE_MB" -gt 1024 ]; then
             echo "Warning: Image size is ${IMAGE_SIZE_MB} MB (over 1GB)"
           fi
           
+          # Check if image was built recently
+          PUSH_TIME=$(echo "$IMAGE_DETAILS" | jq -r '.imagePushedAt')
+          echo "Image pushed at: $PUSH_TIME"
+          
+          # Verify image manifest type is compatible with Lambda
+          MANIFEST_TYPE=$(echo "$IMAGE_DETAILS" | jq -r '.imageManifestMediaType')
+          echo "Manifest type: $MANIFEST_TYPE"
+          
+          if [[ "$MANIFEST_TYPE" == *"docker"* ]]; then
+            echo "Image manifest type is compatible with Lambda"
+          else
+            echo " Warning: Unusual manifest type: $MANIFEST_TYPE"
+          fi
+          
+          echo "Image verification completed successfully"
           echo "Image is ready for Lambda deployment"
 
     outputs:
@@ -165,6 +191,26 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.50.2
+
+      - name: Run TFLint
+        run: tflint --init && tflint -f compact
+        working-directory: ./
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        continue-on-error: true
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+        continue-on-error: true
 
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -176,17 +222,16 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.12.0
           terraform_wrapper: false
+      
+      - name: Terraform Format
+        id: fmt
+        run: terraform fmt -recursive
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
         run: terraform init
-
-      - name: Select or Create Workspace
-        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
-        run: |
-          terraform workspace select ${{ github.event.inputs.environment || 'dev' }} || terraform workspace new ${{ github.event.inputs.environment || 'dev' }}
 
       - name: Terraform Plan
         id: plan
@@ -195,95 +240,8 @@ jobs:
           terraform plan \
             -var="aws_region=${{ env.AWS_REGION }}" \
             -var="image_tag=${{ needs.build-and-push.outputs.image_tag || github.event.inputs.image_tag || 'latest' }}" \
-            -out=tfplan -no-color > plan_output.txt 2>&1
+            -out=tfplan
           echo "plan_exitcode=$?" >> $GITHUB_OUTPUT
-          
-          # Save plan for PR comment
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "TERRAFORM_PLAN<<EOF" >> $GITHUB_ENV
-            cat plan_output.txt >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
-          fi
-
-      - name: Setup Node.js
-        if: github.event_name == 'pull_request'
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install terraform-docs
-        if: github.event_name == 'pull_request'
-        run: |
-          curl -sSLo ./terraform-docs.tar.gz https://terraform-docs.io/dl/v0.16.0/terraform-docs-v0.16.0-$(uname)-amd64.tar.gz
-          tar -xzf terraform-docs.tar.gz
-          chmod +x terraform-docs
-          sudo mv terraform-docs /usr/local/bin/
-
-      - name: Generate Terraform Docs and Commit
-        if: github.event_name == 'pull_request'
-        run: |
-          git config --local user.email "vnagaraj984@gmail.com"
-          git config --local user.name "nag9844"
-
-          echo "--- Generating terraform-docs ---"
-          # Direct terraform-docs to generate markdown to a temporary file
-          terraform-docs markdown . > README.md.new
-          # Overwrite the actual README.md only if generation was successful
-          mv README.md.new README.md
-
-          # Add README.md to staging area.
-          if [ -f README.md ]; then
-            git add README.md
-            # Attempt to commit. If there are no changes staged, this will return a non-zero exit code.
-            # The '|| true' ensures the step doesn't fail, but we'll check if a commit happened later.
-            if git commit -m "docs: Update README.md"; then
-              echo "Successfully committed README.md changes."
-            else
-              echo "No README.md changes to commit or commit failed. Continuing..."
-              # Check if there are still unstaged changes that were not committed
-              if ! git diff --quiet; then
-                echo "WARNING: Uncommitted changes still exist after attempting to commit README.MD."
-                git status
-              fi
-            fi
-          else
-            echo "WARNING: README.md was not generated by terraform-docs."
-          fi
-
-      - name: Comment Plan on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const plan = process.env.TERRAFORM_PLAN || 'Plan not available';
-            const comment = `
-            ## Terraform Plan - ${{ github.event.inputs.environment || 'dev' }} Environment
-            
-            **Plan Status**: ${{ steps.plan.outputs.plan_exitcode == '2' && 'Changes Detected' || 'No Changes' }}
-            **Image Tag**: ${{ needs.build-and-push.outputs.image_tag || 'N/A' }}
-            
-            <details>
-            <summary>Show Plan Details</summary>
-            
-            \`\`\`hcl
-            ${plan}
-            \`\`\`
-            
-            </details>
-            
-            ### Environment Details
-            - Environment: ${{ github.event.inputs.environment || 'dev' }}
-            - Image Tag: ${{ needs.build-and-push.outputs.image_tag || github.event.inputs.image_tag || 'latest' }}
-            - Region: ${{ env.AWS_REGION }}
-            - Workspace: ${{ github.event.inputs.environment || 'dev' }}
-            `;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
 
       - name: Terraform Apply
         if: github.event_name != 'pull_request'
@@ -346,51 +304,34 @@ jobs:
           echo "function_url=$FUNCTION_URL" >> $GITHUB_OUTPUT
           echo "lambda_arn=$LAMBDA_ARN" >> $GITHUB_OUTPUT
 
-      - name: Test Deployment with Retries
-        if: github.event_name != 'pull_request' && steps.outputs.outputs.api_url != ''
-        run: |
-          echo "Testing deployment with retries..."
-          API_URL="${{ steps.outputs.outputs.api_url }}"
-          FUNCTION_URL="${{ steps.outputs.outputs.function_url }}"
-          
-          echo "API Gateway URL: $API_URL"
-          echo "Lambda Function URL: $FUNCTION_URL"
-          
-          # Test API Gateway with retries
-          echo "Testing API Gateway..."
-          for i in {1..5}; do
-            echo "Attempt $i/5..."
-            RESPONSE=$(curl -s "$API_URL" || echo "")
-            echo "Response: $RESPONSE"
+      
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `
+            ## Terraform Plan - ${{ github.event.inputs.environment || 'dev' }} Environment
             
-            if [[ "$RESPONSE" == *"This is a Lambda function running in a container"* ]]; then
-              echo "API Gateway test successful - Updated message detected!"
-              break
-            else
-              echo "Still getting old response, waiting 30 seconds..."
-              sleep 30
-            fi
-          done
-          
-          # Test Lambda Function URL with retries
-          if [ -n "$FUNCTION_URL" ]; then
-            echo "Testing Lambda Function URL..."
-            for i in {1..5}; do
-              echo "Attempt $i/5..."
-              RESPONSE=$(curl -s "$FUNCTION_URL" || echo "")
-              echo "Response: $RESPONSE"
-              
-              if [[ "$RESPONSE" == *"This is a Lambda function running in a container"* ]]; then
-                echo "Lambda Function URL test successful - Updated message detected!"
-                break
-              else
-                echo "Still getting old response, waiting 30 seconds..."
-                sleep 30
-              fi
-            done
-          fi
-          
-          echo "Deployment testing completed!"
+            **Plan Status**: ${{ steps.plan.outputs.plan_exitcode == '2' && 'Changes Detected' || 'No Changes' }}
+            **Image Tag**: ${{ needs.build-and-push.outputs.image_tag || 'N/A' }}
+            
+            <details>
+            <summary>Show Plan Details</summary>
+            
+            - Environment: ${{ github.event.inputs.environment || 'dev' }}
+            - Image Tag: ${{ needs.build-and-push.outputs.image_tag || github.event.inputs.image_tag || 'latest' }}
+            - Region: ${{ env.AWS_REGION }}
+            
+            </details>
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
 
     outputs:
       api_url: ${{ steps.outputs.outputs.api_url }}
