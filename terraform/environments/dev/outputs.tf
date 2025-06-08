@@ -10,17 +10,17 @@ output "ecr_repository_url" {
 
 output "lambda_function_arn" {
   description = "ARN of the Lambda function"
-  value       = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_arn : aws_lambda_function.placeholder[0].arn
+  value       = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_arn : aws_lambda_function.placeholder[0].arn
 }
 
 output "lambda_function_name" {
   description = "Name of the Lambda function"
-  value       = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_name : aws_lambda_function.placeholder[0].function_name
+  value       = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_name : aws_lambda_function.placeholder[0].function_name
 }
 
 output "lambda_function_url" {
   description = "Function URL of the Lambda function"
-  value       = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_url : null
+  value       = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_url : null
 }
 
 output "api_gateway_url" {
@@ -40,7 +40,12 @@ output "monitoring_dashboard_url" {
 
 output "container_image_available" {
   description = "Whether container image is available in ECR"
-  value       = length(data.aws_ecr_repository_images.main.image_ids) > 0
+  value       = data.external.ecr_images.result.has_images == "true"
+}
+
+output "deployment_type" {
+  description = "Type of Lambda deployment (placeholder or container)"
+  value       = data.external.ecr_images.result.has_images == "true" ? "container" : "placeholder"
 }
 
 # Output summary for easy access
@@ -49,10 +54,10 @@ output "deployment_summary" {
   value = {
     environment            = "dev"
     api_gateway_url       = module.api_gateway.api_url
-    lambda_function_url   = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? module.lambda[0].function_url : null
+    lambda_function_url   = data.external.ecr_images.result.has_images == "true" ? module.lambda[0].function_url : null
     ecr_repository_url    = data.aws_ecr_repository.main.repository_url
     dashboard_url         = module.monitoring.dashboard_url
-    container_image_ready = length(data.aws_ecr_repository_images.main.image_ids) > 0
-    deployment_type       = length(data.aws_ecr_repository_images.main.image_ids) > 0 ? "container" : "placeholder"
+    container_image_ready = data.external.ecr_images.result.has_images == "true"
+    deployment_type       = data.external.ecr_images.result.has_images == "true" ? "container" : "placeholder"
   }
 }
