@@ -61,7 +61,7 @@ jobs:
 
       - name: Destroy ECR Repository
         if: github.event.inputs.destroy_ecr == 'true'
-        working-directory: terraform/standalone/ecr
+        working-directory: terraform/modules/ecr
         run: |
           terraform init
           terraform destroy -auto-approve \
