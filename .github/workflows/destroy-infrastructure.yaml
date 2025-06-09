@@ -61,9 +61,10 @@ jobs:
 
       - name: Destroy ECR Repository
         if: github.event.inputs.destroy_ecr == 'true'
-        working-directory: terraform/modules/ecr
+        working-directory: terraform/standalone/ecr
         run: |
           terraform init
           terraform destroy -auto-approve \
+            -var="project_name=hello-world-lambda" \
             -var="environment=${{ github.event.inputs.environment }}" \
             -var="aws_region=${{ env.AWS_REGION }}"
