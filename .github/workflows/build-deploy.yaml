@@ -25,7 +25,7 @@ on:
   # CI triggers
   pull_request:
     branches: [main]
-    paths: ['src/**', 'terraform/**', '.github/wokflows/**']   # run when code OR tf changes
+    # paths: ['src/**', 'terraform/**', '.github/wokflows/**']   # run when code OR tf changes
   push:
     branches: [main]
 
