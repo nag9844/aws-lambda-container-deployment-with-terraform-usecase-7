@@ -243,6 +243,7 @@ jobs:
             -var="image_tag=${{ needs.build-and-push.outputs.image_tag || github.event.inputs.image_tag || 'latest' }}" \
             -out=tfplan
           echo "plan_exitcode=$?" >> $GITHUB_OUTPUT
+      
 
       - name: Terraform Apply
         if: github.event_name != 'pull_request'
