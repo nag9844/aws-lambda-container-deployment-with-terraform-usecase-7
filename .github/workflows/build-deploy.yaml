@@ -203,8 +203,7 @@ jobs:
 
       - name: Run TFLint
         run: tflint --init && tflint -f compact
-        with:
-          working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'dev' }}
         continue-on-error: true
 
 
