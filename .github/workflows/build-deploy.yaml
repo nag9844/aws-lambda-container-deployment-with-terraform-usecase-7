@@ -197,9 +197,7 @@ jobs:
       # Commit tfplan.md back to the PR branch
       # ------------------------------------------------------------------
       - name: Commit plan back to PR branch
-        if: >
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository   # skip forks
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           BRANCH_NAME: ${{ github.head_ref }}
           PLAN_PATH: .github/terraform-plans/plan-${{ github.event.number }}.md
@@ -207,21 +205,20 @@ jobs:
           git config --global user.name  "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 1 Fetch and check out the real branch tip
+          # Fetch and check out the real branch tip
           git fetch --quiet origin "$BRANCH_NAME"
           git checkout -B "$BRANCH_NAME" "origin/$BRANCH_NAME"
 
-          # 2 Copy/overwrite the plan file
+          # Copy/overwrite the plan file
           mkdir -p .github/terraform-plans
           cp terraform/environments/${{ github.event.inputs.environment || 'dev' }}/tfplan.md "$PLAN_PATH"
 
-          # 3 Commit (do nothing if file unchanged)
+          # Commit (skip if no changes)
           git add "$PLAN_PATH"
           git commit -m "docs(terraform): add plan for PR #${{ github.event.number }}" || echo "No changes to commit"
 
-          # 4 Push safely even if history moved
+          # Safe push
           git push origin HEAD:"$BRANCH_NAME" --force-with-lease
-
 
       #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       # --- Comment summary on PR --------------------------------
