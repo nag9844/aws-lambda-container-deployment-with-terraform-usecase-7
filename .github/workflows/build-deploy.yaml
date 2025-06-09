@@ -191,6 +191,26 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.50.2
+
+      - name: Run TFLint
+        run: tflint --init && tflint -f compact
+        working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ./terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+          framework: terraform
+        continue-on-error: true
 
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -204,6 +224,11 @@ jobs:
         with:
           terraform_version: 1.12.0
           terraform_wrapper: false
+      
+      - name: Terraform Format
+        id: fmt
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: terraform fmt -recursive
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
@@ -218,6 +243,7 @@ jobs:
             -var="image_tag=${{ needs.build-and-push.outputs.image_tag || github.event.inputs.image_tag || 'latest' }}" \
             -out=tfplan
           echo "plan_exitcode=$?" >> $GITHUB_OUTPUT
+      
 
       - name: Terraform Apply
         if: github.event_name != 'pull_request'
