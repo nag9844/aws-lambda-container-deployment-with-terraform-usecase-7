@@ -28,5 +28,5 @@ def lambda_handler(event, context):
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type'
         },
-        'body': 'Hello World! This is a simple AWS Lambda function running in a container.'
+        'body': 'Hello World!'
     }
