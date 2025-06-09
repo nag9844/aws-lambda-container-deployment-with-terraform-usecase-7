@@ -37,8 +37,7 @@ locals {
 }
 
 # Data sources
-# data "aws_caller_identity" "current" {}
-# data "aws_region" "current" {}
+
 
 # Data source to get existing ECR repository (created separately)
 data "aws_ecr_repository" "main" {
@@ -59,8 +58,8 @@ module "vpc" {
   environment        = local.environment
   vpc_cidr          = var.vpc_cidr
   az_count          = var.az_count
-  enable_nat_gateway = false  # Disabled for dev to save costs
-  enable_flow_logs   = false  # Disabled for dev to save costs
+  enable_nat_gateway = true  
+  enable_flow_logs   = false  
 }
 
 # Lambda Module
