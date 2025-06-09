@@ -277,12 +277,6 @@ jobs:
           git config --global user.email "vnagaraj984@gmail.com"
           git config --global user.name "nag9844"
 
-          echo "--- Generating terraform-docs from $(pwd) ---"
-          terraform-docs markdown . > ../../../README.md.new
-          mv ../../../README.md.new ../../../README.md
-
-          cd ../../../
-
           git fetch origin ${{ github.head_ref }}
           git checkout ${{ github.head_ref }}
 
