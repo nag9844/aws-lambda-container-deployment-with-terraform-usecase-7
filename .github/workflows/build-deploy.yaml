@@ -47,11 +47,6 @@ jobs:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
 
-    # Skip the heavy Docker build for PRs unless you really need it
-    # if: |
-    #   github.event_name != 'pull_request' &&
-    #   (github.event.inputs.skip_build != 'true')
-
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.skip_build != 'true' || github.event_name != 'workflow_dispatch'
 
     environment: ${{ github.event.inputs.environment || 'dev' }}
@@ -261,32 +256,6 @@ jobs:
           echo "lambda_arn=$LAMBDA_ARN" >> $GITHUB_OUTPUT
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
 
-      # #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      # # --- Update docs/infra-outputs.md on main ------------------
-      # #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      # - name: Update infra-outputs Markdown
-      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      #   run: |
-      #     FILE="docs/infra-outputs.md"
-      #     mkdir -p docs
-
-      #     cat > $FILE <<EOF
-      #     # Latest infrastructure outputs (main)
-
-      #     | Output | Value |
-      #     | ------ | ----- |
-      #     | API Gateway URL | \`${{ steps.tfoutputs.outputs.api_url || 'N/A' }}\` |
-      #     | Lambda Function URL | \`${{ steps.tfoutputs.outputs.function_url || 'N/A' }}\` |
-      #     | Lambda ARN | \`${{ steps.tfoutputs.outputs.lambda_arn || 'N/A' }}\` |
-
-      #     _Generated on $(date -u '+%Y-%m-%d %H:%M UTC') by commit \`${{ github.sha }}\`._
-      #     EOF
-
-      #     git config --global user.name  "github-actions[bot]"
-      #     git config --global user.email "github-actions[bot]@users.noreply.github.com"
-      #     git add $FILE
-      #     git commit -m "docs: update infra outputs for ${GITHUB_SHA::7}" || true
-      #     git push
       - name: Setup Node.js
         if: github.event_name == 'pull_request'
         uses: actions/setup-node@v3
@@ -307,6 +276,12 @@ jobs:
         run: |
           git config --global user.email "vnagaraj984@gmail.com"
           git config --global user.name "nag9844"
+
+          echo "--- Generating terraform-docs from $(pwd) ---"
+          terraform-docs markdown . > ../../../README.md.new
+          mv ../../../README.md.new ../../../README.md
+
+          cd ../../../
 
           git fetch origin ${{ github.head_ref }}
           git checkout ${{ github.head_ref }}
