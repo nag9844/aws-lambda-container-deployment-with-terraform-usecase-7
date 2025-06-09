@@ -40,15 +40,15 @@ locals {
 
 
 # Data source to get existing ECR repository (created separately)
-data "aws_ecr_repository" "main" {
-  name = "${var.project_name}-${local.environment}"
-}
+#data "aws_ecr_repository" "main" {
+#  name = "${var.project_name}-${local.environment}"
+#}
 
 # Check if image exists in ECR
-data "aws_ecr_image" "lambda_image" {
-  repository_name = data.aws_ecr_repository.main.name
-  image_tag       = var.image_tag
-}
+#data "aws_ecr_image" "lambda_image" {
+#  repository_name = data.aws_ecr_repository.main.name
+#  image_tag       = var.image_tag
+#}
 
 # VPC Module
 module "vpc" {
