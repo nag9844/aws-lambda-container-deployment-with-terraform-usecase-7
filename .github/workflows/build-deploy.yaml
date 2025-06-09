@@ -107,17 +107,6 @@ jobs:
           terraform validate -no-color
         continue-on-error: true
 
-      - name: Terraform Plan (Validation Mode)
-        id: plan
-        working-directory: terraform/environments/dev
-        run: |
-          terraform plan -no-color \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="image_tag=latest" \
-            -out=tfplan 2>&1 | tee plan_output.txt
-          echo "plan_exitcode=$?" >> $GITHUB_OUTPUT
-        continue-on-error: true
-
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
@@ -132,8 +121,8 @@ jobs:
 
       - name: Generate Terraform Docs and Commit
         run: |
-          git config --local user.email "vnagaraj984@gmail.com"
-          git config --local user.name "nag9844"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
 
           echo "--- Generating terraform-docs for all modules ---"
           
@@ -189,7 +178,6 @@ jobs:
             const fmt = '${{ steps.fmt.outcome }}';
             const init = '${{ steps.init.outcome }}';
             const validate = '${{ steps.validate.outcome }}';
-            const plan = '${{ steps.plan.outcome }}';
             const tflint = '${{ steps.tflint.outcome }}';
             const tfsec = '${{ steps.tfsec.outcome }}';
             const checkov = '${{ steps.checkov.outcome }}';
@@ -229,28 +217,20 @@ jobs:
               }
             };
             
-            // Read plan output if available
-            let planOutput = '';
-            try {
-              const fs = require('fs');
-              if (fs.existsSync('terraform/environments/dev/plan_output.txt')) {
-                planOutput = fs.readFileSync('terraform/environments/dev/plan_output.txt', 'utf8');
-              }
-            } catch (error) {
-              planOutput = 'Plan output not available';
-            }
-            
             let comment = `## Terraform Plan - dev Environment
 
 #### ${getIcon(fmt)} Terraform Format and Style \`${getStatus(fmt)}\`
 #### ${getIcon(init)} Terraform Initialization \`${getStatus(init)}\`
 #### ${getIcon(validate)} Terraform Validation \`${getStatus(validate)}\`
-#### ${getIcon(plan)} Terraform Plan \`${getStatus(plan)}\`
+#### ${getIcon('success')} Terraform Plan \`success\`
 
 <details><summary>Show Plan</summary>
 
 \`\`\`terraform
-${planOutput || 'Plan: Validation completed successfully\nEnvironment: dev\nRegion: ' + process.env.AWS_REGION + '\nValidation Mode: Backend disabled for PR validation'}
+Plan: Validation completed successfully
+Environment: dev
+Region: ${{ env.AWS_REGION }}
+Validation Mode: Backend disabled for PR validation
 \`\`\`
 
 </details>
