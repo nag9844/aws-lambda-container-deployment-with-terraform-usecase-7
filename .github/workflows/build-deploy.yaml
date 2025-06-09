@@ -250,7 +250,7 @@ jobs:
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
         run: terraform apply -auto-approve tfplan
 
-      - name: Force Lambda Function Update
+      - name: Lambda Function Update
         if: github.event_name != 'pull_request'
         run: |
           FUNCTION_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
