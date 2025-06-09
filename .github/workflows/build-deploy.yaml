@@ -176,17 +176,24 @@ jobs:
         run: terraform init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
 
-      - name: Terraform Plan
-        id: plan
-        run: |
-          terraform plan \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="image_tag=${{ needs.build-and-push.outputs.image_tag || github.event.inputs.image_tag || 'latest' }}" \
-            -out=tfplan
+      # - name: Terraform Plan
+      #   id: plan
+      #   run: |
+      #     terraform plan \
+      #       -var="aws_region=${{ env.AWS_REGION }}" \
+      #       -var="image_tag=${{ needs.build-and-push.outputs.image_tag || github.event.inputs.image_tag || 'latest' }}" \
+      #       -out=tfplan
 
-          # Convert binary plan to Markdown for easier review
-          terraform show -no-color tfplan > tfplan.md
+      #     # Convert binary plan to Markdown for easier review
+      #     terraform show -no-color tfplan > tfplan.md
+      #   working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+
+      - name: Terraform Plan
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          terraform init -input=false
+          terraform plan -no-color -out=tfplan.binary
+          terraform show -no-color tfplan.binary > tfplan.md
 
       # ------------------------------------------------------------------
       # Commit tfplan.md back to the PR branch
@@ -218,7 +225,7 @@ jobs:
       #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       # --- Comment summary on PR --------------------------------
       #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      - name: Comment Plan Summary
+      - name: Comment Terraform Plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
