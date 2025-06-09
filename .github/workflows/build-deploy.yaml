@@ -199,6 +199,7 @@ jobs:
         uses: terraform-linters/setup-tflint@v4
         with:
           tflint_version: v0.50.2
+        continue-on-error: true
 
       - name: Run TFLint
         run: tflint --init && tflint -f compact
