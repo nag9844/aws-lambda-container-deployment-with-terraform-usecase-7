@@ -250,7 +250,7 @@ jobs:
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
         run: terraform apply -auto-approve tfplan
 
-      - name: Force Lambda Function Update
+      - name: Lambda Function Update
         if: github.event_name != 'pull_request'
         run: |
           FUNCTION_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
@@ -334,6 +334,25 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
+      
+      - name: Generate terraform docs
+        uses: terraform-docs/gh-actions@main
+        with:           
+          working-dir: ./terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+          git-push: true
+          output-file: README.md
+          output-method: inject
+          config-file: disabled
+          atlantis-file: disabled
+          find-dir: disabled
+          recursive: false
+          recursive-path: modules
+          output-format: markdown table
+          output-template: <!-- BEGIN_TF_DOCS -->\n{{ .Content }}\n<!-- END_TF_DOCS -->"
+          indention: 2
+          git-commit-message: terraform-docs:automated action
+          git-push-sign-off: false
+          fail-on-diff: false
 
     outputs:
       api_url: ${{ steps.outputs.outputs.api_url }}
