@@ -199,11 +199,13 @@ jobs:
         uses: terraform-linters/setup-tflint@v4
         with:
           tflint_version: v0.50.2
-        continue-on-error: true
+        
 
       - name: Run TFLint
         run: tflint --init && tflint -f compact
-        working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        with:
+          working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        continue-on-error: true
 
 
       - name: Run Checkov
@@ -217,14 +219,12 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          role-session-name: GitHubActions-Deploy-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.12.0
-          terraform_wrapper: false
       
       - name: Terraform Format
         id: fmt

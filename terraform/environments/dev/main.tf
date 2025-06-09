@@ -37,8 +37,8 @@ locals {
 }
 
 # Data sources
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
+# data "aws_caller_identity" "current" {}
+# data "aws_region" "current" {}
 
 # Data source to get existing ECR repository (created separately)
 data "aws_ecr_repository" "main" {
