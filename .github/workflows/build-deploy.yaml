@@ -48,9 +48,11 @@ jobs:
     runs-on: ubuntu-latest
 
     # Skip the heavy Docker build for PRs unless you really need it
-    if: |
-      github.event_name != 'pull_request' &&
-      (github.event.inputs.skip_build != 'true')
+    # if: |
+    #   github.event_name != 'pull_request' &&
+    #   (github.event.inputs.skip_build != 'true')
+
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.skip_build != 'true' || github.event_name != 'workflow_dispatch'
 
     environment: ${{ github.event.inputs.environment || 'dev' }}
 
