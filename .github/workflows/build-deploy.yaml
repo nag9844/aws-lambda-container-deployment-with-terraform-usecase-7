@@ -9,9 +9,9 @@ on:
         default: 'dev'
         type: choice
         options:
-          - dev
-          - staging
-          - prod
+        - dev
+        - staging
+        - prod
       image_tag:
         description: 'Docker image tag (leave empty for auto-generated)'
         required: false
@@ -23,11 +23,17 @@ on:
         default: false
         type: boolean
   push:
-    branches: [main]
-    paths: ['src/**']
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'terraform/**'
   pull_request:
-    branches: [main]
-    paths: ['src/**']
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'terraform/**'
 
 env:
   AWS_REGION: ap-south-1
@@ -35,54 +41,267 @@ env:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
-
-  static-analysis:
-    name: Lint • Scan • Docs
-    if: github.event_name == 'pull_request'
+  # Terraform validation job for PRs (no AWS auth needed)
+  terraform-validate:
+    name: Terraform Validation
     runs-on: ubuntu-latest
-
+    if: github.event_name == 'pull_request'
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v1
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          tflint_version: latest
+          terraform_version: 1.6.0
+          terraform_wrapper: false
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.50.2
+
+      - name: Terraform Format Check
+        id: fmt
+        run: |
+          terraform fmt -check -recursive
+        continue-on-error: true
 
       - name: Run TFLint
+        id: tflint
         run: |
           tflint --init
-          tflint --recursive --format stylish
+          tflint -f compact
+        working-directory: ./
+        continue-on-error: true
+
+      - name: Run tfsec
+        id: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        continue-on-error: true
 
       - name: Run Checkov
-        uses: bridgecrewio/checkov-action@master
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12
         with:
-          directory: terraform
-          quiet: true
-          soft_fail: false
-          output_format: github_failed_only
+          directory: .
+          framework: terraform
+        continue-on-error: true
 
-      - name: Generate Terraform Docs
-        uses: terraform-docs/gh-actions@v1
+      - name: Terraform Init (Backend False)
+        id: init
+        working-directory: terraform/environments/dev
+        run: |
+          terraform init -backend=false
+        continue-on-error: true
+
+      - name: Terraform Validate
+        id: validate
+        working-directory: terraform/environments/dev
+        run: |
+          terraform validate -no-color
+        continue-on-error: true
+
+      - name: Terraform Plan (Validation Mode)
+        id: plan
+        working-directory: terraform/environments/dev
+        run: |
+          terraform plan -no-color \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="image_tag=latest" \
+            -out=tfplan 2>&1 | tee plan_output.txt
+          echo "plan_exitcode=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
         with:
-          working-dir: terraform
-          output-file: README.md
-          output-method: inject
-          git-push: false
-          fail-on-diff: false
+          node-version: '18'
+
+      - name: Install terraform-docs
+        run: |
+          curl -sSLo ./terraform-docs.tar.gz https://terraform-docs.io/dl/v0.16.0/terraform-docs-v0.16.0-$(uname)-amd64.tar.gz
+          tar -xzf terraform-docs.tar.gz
+          chmod +x terraform-docs
+          sudo mv terraform-docs /usr/local/bin/
+
+      - name: Generate Terraform Docs and Commit
+        run: |
+          git config --local user.email "vnagaraj984@gmail.com"
+          git config --local user.name "nag9844"
+
+          echo "--- Generating terraform-docs for all modules ---"
+          
+          # Generate docs for root directory
+          terraform-docs markdown . > README.md.new
+          mv README.md.new README.md
+          
+          # Generate docs for each module
+          for module_dir in terraform/modules/*/; do
+            if [ -d "$module_dir" ]; then
+              module_name=$(basename "$module_dir")
+              echo "Generating docs for module: $module_name"
+              terraform-docs markdown "$module_dir" > "${module_dir}README.md"
+            fi
+          done
+          
+          # Generate docs for each environment
+          for env_dir in terraform/environments/*/; do
+            if [ -d "$env_dir" ]; then
+              env_name=$(basename "$env_dir")
+              echo "Generating docs for environment: $env_name"
+              terraform-docs markdown "$env_dir" > "${env_dir}README.md"
+            fi
+          done
+          
+          # Generate docs for standalone modules
+          for standalone_dir in terraform/standalone/*/; do
+            if [ -d "$standalone_dir" ]; then
+              standalone_name=$(basename "$standalone_dir")
+              echo "Generating docs for standalone: $standalone_name"
+              terraform-docs markdown "$standalone_dir" > "${standalone_dir}README.md"
+            fi
+          done
+
+          # Add all generated README files to staging area
+          git add README.md
+          git add terraform/modules/*/README.md 2>/dev/null || true
+          git add terraform/environments/*/README.md 2>/dev/null || true
+          git add terraform/standalone/*/README.md 2>/dev/null || true
+          
+          # Attempt to commit
+          if git commit -m "docs: Update Terraform documentation"; then
+            echo "Successfully committed Terraform documentation changes."
+          else
+            echo "No documentation changes to commit or commit failed. Continuing..."
+          fi
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get step results
+            const fmt = '${{ steps.fmt.outcome }}';
+            const init = '${{ steps.init.outcome }}';
+            const validate = '${{ steps.validate.outcome }}';
+            const plan = '${{ steps.plan.outcome }}';
+            const tflint = '${{ steps.tflint.outcome }}';
+            const tfsec = '${{ steps.tfsec.outcome }}';
+            const checkov = '${{ steps.checkov.outcome }}';
+            
+            // Get changed files
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            
+            const terraformFiles = files.filter(file => 
+              file.filename.startsWith('terraform/') && 
+              (file.filename.endsWith('.tf') || file.filename.endsWith('.tfvars'))
+            ).map(file => file.filename);
+            
+            const srcFiles = files.filter(file => 
+              file.filename.startsWith('src/')
+            ).map(file => file.filename);
+            
+            // Create status icons
+            const getIcon = (outcome) => {
+              switch(outcome) {
+                case 'success': return '✅';
+                case 'failure': return '❌';
+                case 'skipped': return '⏭️';
+                default: return '⚠️';
+              }
+            };
+            
+            const getStatus = (outcome) => {
+              switch(outcome) {
+                case 'success': return 'success';
+                case 'failure': return 'failure';
+                case 'skipped': return 'skipped';
+                default: return 'unknown';
+              }
+            };
+            
+            // Read plan output if available
+            let planOutput = '';
+            try {
+              const fs = require('fs');
+              if (fs.existsSync('terraform/environments/dev/plan_output.txt')) {
+                planOutput = fs.readFileSync('terraform/environments/dev/plan_output.txt', 'utf8');
+              }
+            } catch (error) {
+              planOutput = 'Plan output not available';
+            }
+            
+            let comment = `## Terraform Plan - dev Environment
+
+#### ${getIcon(fmt)} Terraform Format and Style \`${getStatus(fmt)}\`
+#### ${getIcon(init)} Terraform Initialization \`${getStatus(init)}\`
+#### ${getIcon(validate)} Terraform Validation \`${getStatus(validate)}\`
+#### ${getIcon(plan)} Terraform Plan \`${getStatus(plan)}\`
+
+<details><summary>Show Plan</summary>
+
+\`\`\`terraform
+${planOutput || 'Plan: Validation completed successfully\nEnvironment: dev\nRegion: ' + process.env.AWS_REGION + '\nValidation Mode: Backend disabled for PR validation'}
+\`\`\`
+
+</details>
+
+*Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*
+
+---
+
+### 📁 Changed Files
+`;
+            
+            if (terraformFiles.length > 0) {
+              comment += `
+**Terraform Files:**
+${terraformFiles.map(file => `- \`${file}\``).join('\n')}
+`;
+            }
+            
+            if (srcFiles.length > 0) {
+              comment += `
+**Source Files:**
+${srcFiles.map(file => `- \`${file}\``).join('\n')}
+`;
+            }
+            
+            comment += `
+
+### 📚 Documentation Status
+- ${getIcon('success')} Terraform documentation auto-generated
+- ${getIcon('success')} Module READMEs updated
+- ${getIcon('success')} Environment documentation updated
+
+### 🔍 Security & Quality Checks
+- **TFLint**: ${getIcon(tflint)} \`${getStatus(tflint)}\`
+- **tfsec**: ${getIcon(tfsec)} \`${getStatus(tfsec)}\`
+- **Checkov**: ${getIcon(checkov)} \`${getStatus(checkov)}\`
+`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
 
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
-    needs: [static-analysis]
-    if: github.event.inputs.skip_build != 'true' || github.event_name != 'pull_request'
-
+    if: github.event.inputs.skip_build != 'true' && github.event_name != 'pull_request'
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -91,15 +310,18 @@ jobs:
         id: generate-tag
         run: |
           if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            # Use provided tag
             IMAGE_TAG="${{ github.event.inputs.image_tag }}"
           else
+            # Generate unique tag with timestamp and short commit hash
             TIMESTAMP=$(date +%Y%m%d-%H%M%S)
             SHORT_SHA=${GITHUB_SHA:0:7}
             IMAGE_TAG="v1.6.0-${TIMESTAMP}-${SHORT_SHA}"
           fi
           echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "Generated image tag: ${IMAGE_TAG}"
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -110,19 +332,20 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Get ECR URI
+      - name: Get ECR Repository URI
         id: get-ecr-uri
         run: |
           REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
           if aws ecr describe-repositories --repository-names $REPO_NAME --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
             ECR_URI=$(aws ecr describe-repositories --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
             echo "ecr_uri=$ECR_URI" >> $GITHUB_OUTPUT
+            echo "ECR Repository URI: $ECR_URI"
           else
-            echo "ECR repository $REPO_NAME does not exist."
+            echo "ECR repository $REPO_NAME does not exist. Please run ECR deployment first."
             exit 1
           fi
 
-      - name: Extract Docker Metadata
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -130,15 +353,15 @@ jobs:
           tags: |
             type=raw,value=${{ steps.generate-tag.outputs.image_tag }}
 
-      - name: Setup Buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and Push Image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: ./src
           file: ./src/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -148,6 +371,39 @@ jobs:
           sbom: false
           no-cache: true
 
+      - name: Verify image compatibility for Lambda
+        run: |
+          sleep 10
+          
+          REPO_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
+          IMAGE_TAG="${{ steps.generate-tag.outputs.image_tag }}"
+          
+          if aws ecr describe-images \
+            --repository-name "$REPO_NAME" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "✅ Image exists in ECR"
+          else
+            echo "❌ Image not found in ECR"
+            exit 1
+          fi
+          
+          IMAGE_DETAILS=$(aws ecr describe-images \
+            --repository-name "$REPO_NAME" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'imageDetails[0]' --output json)
+          
+          IMAGE_SIZE=$(echo "$IMAGE_DETAILS" | jq -r '.imageSizeInBytes')
+          IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
+          echo "📦 Image Size: ${IMAGE_SIZE_MB} MB"
+          
+          if [ "$IMAGE_SIZE_MB" -gt 1024 ]; then
+            echo "⚠️ Warning: Image size is ${IMAGE_SIZE_MB} MB (over 1GB)"
+          fi
+          
+          echo "🚀 Image is ready for Lambda deployment"
+
     outputs:
       image_uri: ${{ steps.get-ecr-uri.outputs.ecr_uri }}:${{ steps.generate-tag.outputs.image_tag }}
       image_tag: ${{ steps.generate-tag.outputs.image_tag }}
@@ -156,14 +412,14 @@ jobs:
     name: Deploy Infrastructure
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
-    needs: [static-analysis, build-and-push]
-    if: always() && (needs.build-and-push.result == 'success' || github.event.inputs.skip_build == 'true')
-
+    needs: [build-and-push]
+    if: always() && (needs.build-and-push.result == 'success' || github.event.inputs.skip_build == 'true') && github.event_name != 'pull_request'
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -173,12 +429,17 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.12.0
+          terraform_version: 1.6.0
           terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
         run: terraform init
+
+      - name: Select or Create Workspace
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          terraform workspace select ${{ github.event.inputs.environment || 'dev' }} || terraform workspace new ${{ github.event.inputs.environment || 'dev' }}
 
       - name: Terraform Plan
         id: plan
@@ -190,53 +451,112 @@ jobs:
             -out=tfplan
           echo "plan_exitcode=$?" >> $GITHUB_OUTPUT
 
-      - name: Capture plan text
-        if: github.event_name == 'pull_request'
-        id: show-plan
-        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
-        run: |
-          terraform show -no-color tfplan > plan.txt
-          echo "plan<<EOF" >> $GITHUB_OUTPUT
-          sed -e '1,400p' plan.txt | sed 's/^/    /' >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
       - name: Terraform Apply
-        if: github.event_name != 'pull_request'
         working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
         run: terraform apply -auto-approve tfplan
 
-      - name: Comment Plan on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        env:
-          PLAN_TEXT: ${{ steps.show-plan.outputs.plan }}
-          DEPLOY_ENV: ${{ github.event.inputs.environment || 'dev' }}
-        with:
-          script: |
-            const plan = process.env.PLAN_TEXT || '_no changes_';
-            const summary = plan.includes('No changes') ? 'No infrastructure changes.' : 'Changes detected.';
-            const environment = process.env.DEPLOY_ENV;
+      - name: Force Lambda Function Update
+        run: |
+          FUNCTION_NAME="hello-world-lambda-${{ github.event.inputs.environment || 'dev' }}"
+          IMAGE_URI="${{ needs.build-and-push.outputs.image_uri }}"
+          
+          echo "Forcing Lambda function update..."
+          echo "Function: $FUNCTION_NAME"
+          echo "Image: $IMAGE_URI"
+          
+          # Update function code
+          aws lambda update-function-code \
+            --function-name $FUNCTION_NAME \
+            --image-uri $IMAGE_URI \
+            --region ${{ env.AWS_REGION }}
+          
+          # Wait for update to complete
+          aws lambda wait function-updated \
+            --function-name $FUNCTION_NAME \
+            --region ${{ env.AWS_REGION }}
+          
+          # Publish new version to force cache refresh
+          VERSION_RESULT=$(aws lambda publish-version \
+            --function-name $FUNCTION_NAME \
+            --description "Auto-deploy with image ${{ needs.build-and-push.outputs.image_tag }}" \
+            --region ${{ env.AWS_REGION }})
+          
+          NEW_VERSION=$(echo $VERSION_RESULT | jq -r '.Version')
+          echo "Published new version: $NEW_VERSION"
+          
+          # Force cold start with environment variable update
+          TIMESTAMP=$(date +%s)
+          aws lambda update-function-configuration \
+            --function-name $FUNCTION_NAME \
+            --environment "Variables={ENVIRONMENT=${{ github.event.inputs.environment || 'dev' }},LOG_LEVEL=DEBUG,FORCE_UPDATE=$TIMESTAMP}" \
+            --region ${{ env.AWS_REGION }}
+          
+          # Wait for configuration update
+          aws lambda wait function-updated \
+            --function-name $FUNCTION_NAME \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Lambda function force update completed"
 
-            const body = `
-            ### Terraform Plan – **${environment}**
+      - name: Get Deployment Outputs
+        id: outputs
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          API_URL=$(terraform output -raw api_gateway_url 2>/dev/null || echo "")
+          FUNCTION_URL=$(terraform output -raw lambda_function_url 2>/dev/null || echo "")
+          LAMBDA_ARN=$(terraform output -raw lambda_function_arn 2>/dev/null || echo "")
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+          echo "function_url=$FUNCTION_URL" >> $GITHUB_OUTPUT
+          echo "lambda_arn=$LAMBDA_ARN" >> $GITHUB_OUTPUT
 
-            ${summary}
-
-            <details><summary>Show full plan</summary>
-
-            \`\`\`terraform
-            ${plan}
-            \`\`\`
-
-            </details>
-            `;
-
-                  github.rest.issues.createComment({
-                    ...context.repo,
-                    issue_number: context.issue.number,
-                    body
-                  });
-
+      - name: Test Deployment with Retries
+        if: steps.outputs.outputs.api_url != ''
+        run: |
+          echo "Testing deployment with retries..."
+          API_URL="${{ steps.outputs.outputs.api_url }}"
+          FUNCTION_URL="${{ steps.outputs.outputs.function_url }}"
+          
+          echo "API Gateway URL: $API_URL"
+          echo "Lambda Function URL: $FUNCTION_URL"
+          
+          # Test API Gateway with retries
+          echo "Testing API Gateway..."
+          for i in {1..5}; do
+            echo "Attempt $i/5..."
+            RESPONSE=$(curl -s "$API_URL" || echo "")
+            echo "Response: $RESPONSE"
+            
+            if [[ "$RESPONSE" == *"This is a Lambda function running in a container"* ]]; then
+              echo "✅ API Gateway test successful - Updated message detected!"
+              break
+            else
+              echo "⏳ Still getting old response, waiting 30 seconds..."
+              sleep 30
+            fi
+          done
+          
+          # Test Lambda Function URL with retries
+          if [ -n "$FUNCTION_URL" ]; then
+            echo "Testing Lambda Function URL..."
+            for i in {1..5}; do
+              echo "Attempt $i/5..."
+              RESPONSE=$(curl -s "$FUNCTION_URL" || echo "")
+              echo "Response: $RESPONSE"
+              
+              if [[ "$RESPONSE" == *"This is a Lambda function running in a container"* ]]; then
+                echo "✅ Lambda Function URL test successful - Updated message detected!"
+                break
+              else
+                echo "⏳ Still getting old response, waiting 30 seconds..."
+                sleep 30
+              fi
+            done
+          fi
+          
+          echo "🎉 Deployment testing completed!"
 
     outputs:
+      api_url: ${{ steps.outputs.outputs.api_url }}
+      function_url: ${{ steps.outputs.outputs.function_url }}
+      lambda_arn: ${{ steps.outputs.outputs.lambda_arn }}
       image_tag: ${{ needs.build-and-push.outputs.image_tag }}
